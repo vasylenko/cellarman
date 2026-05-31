@@ -75,6 +75,8 @@ func (c *Client) Info(ctx context.Context, name string, kind Kind) (*Formula, *C
 	args := []string{"info", "--json=v2"}
 	if kind == KindCask {
 		args = append(args, "--cask")
+	} else {
+		args = append(args, "--formula")
 	}
 	args = append(args, name)
 
@@ -146,12 +148,16 @@ func (c *Client) Search(ctx context.Context, term string, kind Kind, evalAll boo
 }
 
 // Doctor runs `brew doctor` and parses its free-form warnings. A non-zero exit
-// is expected when warnings exist, so the exec error is intentionally ignored;
-// only a failure to run brew at all surfaces (as empty output + parse).
+// WITH output means warnings exist — expected, not a failure — so that exit code
+// is ignored. A genuine failure to run brew (an error and no output at all) is
+// surfaced, so the UI never reports a healthy system for a brew that never ran.
 func (c *Client) Doctor(ctx context.Context) (*DoctorReport, error) {
-	stdout, stderr, _ := c.r.Output(ctx, "doctor")
+	stdout, stderr, err := c.r.Output(ctx, "doctor")
 	// brew doctor writes warnings to stderr and the all-clear to stdout.
 	combined := strings.TrimSpace(string(stdout) + "\n" + string(stderr))
+	if combined == "" && err != nil {
+		return nil, cmdErr("doctor", stderr, err)
+	}
 	return parseDoctor(combined), nil
 }
 
@@ -174,13 +180,16 @@ func (c *Client) Autoremove(ctx context.Context) (<-chan Event, error) {
 // parseJSON unmarshals brew JSON, tolerating a stray leading notice line by
 // trimming to the first JSON delimiter only when a direct parse fails.
 func parseJSON(b []byte, v any) error {
-	if err := json.Unmarshal(bytes.TrimSpace(b), v); err == nil {
+	err := json.Unmarshal(bytes.TrimSpace(b), v)
+	if err == nil {
 		return nil
 	}
-	if i := bytes.IndexAny(b, "{["); i >= 0 {
+	// Retry from the first JSON delimiter only when something precedes it — a
+	// stray notice line brew occasionally prints before the payload.
+	if i := bytes.IndexAny(b, "{["); i > 0 {
 		return json.Unmarshal(b[i:], v)
 	}
-	return json.Unmarshal(bytes.TrimSpace(b), v)
+	return err
 }
 
 // parseSearch turns `brew search` line output into names, dropping the
@@ -267,7 +276,13 @@ func (r *execRunner) Stream(ctx context.Context, args ...string) (<-chan Event, 
 			}
 		}
 		pr.Close()
-		ch <- Event{Done: true, Err: cmd.Wait()}
+		// Wait reaps the child and releases fds; guard the terminal send so a
+		// consumer that stopped reading (e.g. on quit) can't strand this goroutine.
+		werr := cmd.Wait()
+		select {
+		case ch <- Event{Done: true, Err: werr}:
+		case <-ctx.Done():
+		}
 	}()
 	return ch, nil
 }

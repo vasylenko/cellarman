@@ -22,15 +22,18 @@ func readFixture(t *testing.T, name string) []byte {
 // tested without a real brew. doctorFile lets a test pick the warnings vs
 // all-clear output; outErr forces the failure path.
 type fakeRunner struct {
-	t           *testing.T
-	doctorFile  string
-	outErr      error
-	outStderr   string
-	streamLines []string
-	streamErr   error
+	t             *testing.T
+	doctorFile    string
+	doctorExitErr error // simulate brew doctor's non-zero exit when warnings exist
+	outErr        error
+	outStderr     string
+	lastArgs      []string // captured for flag assertions
+	streamLines   []string
+	streamErr     error
 }
 
 func (f *fakeRunner) Output(_ context.Context, args ...string) ([]byte, []byte, error) {
+	f.lastArgs = args
 	if f.outErr != nil {
 		return nil, []byte(f.outStderr), f.outErr
 	}
@@ -59,7 +62,7 @@ func (f *fakeRunner) Output(_ context.Context, args ...string) ([]byte, []byte, 
 	case "search":
 		return readFixture(f.t, "search_formula.txt"), nil, nil
 	case "doctor":
-		return readFixture(f.t, f.doctorFile), nil, nil
+		return readFixture(f.t, f.doctorFile), nil, f.doctorExitErr
 	}
 	f.t.Fatalf("fakeRunner: unexpected args %v", args)
 	return nil, nil, nil
@@ -224,6 +227,14 @@ func TestDoctorWarnings(t *testing.T) {
 	if len(report.Warnings[0].Details) == 0 {
 		t.Error("first warning should have details")
 	}
+	// The leading "Please note…" preamble must be excluded, not folded into a warning.
+	for _, w := range report.Warnings {
+		for _, d := range w.Details {
+			if strings.Contains(d, "Please note") {
+				t.Errorf("preamble leaked into warning details: %q", d)
+			}
+		}
+	}
 }
 
 func TestDoctorOK(t *testing.T) {
@@ -296,5 +307,50 @@ func TestExecRunnerStreamPropagatesExitError(t *testing.T) {
 	}
 	if done.Err == nil {
 		t.Error("expected non-nil Done.Err for exit 3")
+	}
+}
+
+// brew doctor exits non-zero when warnings exist; with output present that exit
+// code is data, not failure, and must still parse into warnings.
+func TestDoctorIgnoresExitCodeWhenOutputPresent(t *testing.T) {
+	c := NewWithRunner(&fakeRunner{t: t, doctorFile: "doctor_warnings.txt", doctorExitErr: errors.New("exit status 1")})
+	report, err := c.Doctor(context.Background())
+	if err != nil {
+		t.Fatalf("non-zero exit with output should not be an error: %v", err)
+	}
+	if report.OK || len(report.Warnings) != 2 {
+		t.Errorf("expected 2 warnings, got OK=%v n=%d", report.OK, len(report.Warnings))
+	}
+}
+
+// A genuine failure to run brew (error, no output) must surface — not be reported
+// as a healthy system.
+func TestDoctorRunFailureSurfaces(t *testing.T) {
+	c := NewWithRunner(&fakeRunner{t: t, outErr: errors.New(`exec: "brew": not found`)})
+	report, err := c.Doctor(context.Background())
+	if err == nil {
+		t.Fatal("a failure to run brew must surface as an error, not a healthy report")
+	}
+	if report != nil {
+		t.Errorf("expected nil report on run failure, got %+v", report)
+	}
+}
+
+func TestSearchPassesEvalAllFlag(t *testing.T) {
+	fr := &fakeRunner{t: t}
+	c := NewWithRunner(fr)
+	if _, err := c.Search(context.Background(), "x", KindFormula, true); err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	joined := strings.Join(fr.lastArgs, " ")
+	if !strings.Contains(joined, "--eval-all") || !strings.Contains(joined, "--formula") {
+		t.Errorf("args %q should include --eval-all and --formula", joined)
+	}
+
+	if _, err := c.Search(context.Background(), "x", KindCask, false); err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if strings.Contains(strings.Join(fr.lastArgs, " "), "--eval-all") {
+		t.Errorf("args %q should NOT include --eval-all when evalAll=false", fr.lastArgs)
 	}
 }
