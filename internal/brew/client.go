@@ -78,7 +78,7 @@ func (c *Client) Info(ctx context.Context, name string, kind Kind) (*Formula, *C
 	} else {
 		args = append(args, "--formula")
 	}
-	args = append(args, name)
+	args = append(args, "--", name) // end-of-options guard, as in Search
 
 	stdout, stderr, err := c.r.Output(ctx, args...)
 	if err != nil {
@@ -138,7 +138,9 @@ func (c *Client) Search(ctx context.Context, term string, kind Kind, evalAll boo
 	if evalAll {
 		args = append(args, "--eval-all")
 	}
-	args = append(args, term)
+	// "--" ends option parsing so a term starting with "-" is treated as text,
+	// not a brew flag (e.g. "--macports" must not switch brew to another source).
+	args = append(args, "--", term)
 
 	stdout, stderr, err := c.r.Output(ctx, args...)
 	if err != nil {
@@ -164,7 +166,9 @@ func (c *Client) Doctor(ctx context.Context) (*DoctorReport, error) {
 // Upgrade upgrades the named packages, or everything outdated when names is
 // empty, streaming brew's progress output.
 func (c *Client) Upgrade(ctx context.Context, names ...string) (<-chan Event, error) {
-	return c.r.Stream(ctx, append([]string{"upgrade"}, names...)...)
+	// "--" guards against a name being parsed as an option; with no names it is
+	// a no-op and brew still upgrades everything outdated.
+	return c.r.Stream(ctx, append([]string{"upgrade", "--"}, names...)...)
 }
 
 // Cleanup removes stale downloads and old versions, streaming progress.
@@ -275,10 +279,16 @@ func (r *execRunner) Stream(ctx context.Context, args ...string) (<-chan Event, 
 			case <-ctx.Done():
 			}
 		}
+		scanErr := scanner.Err() // e.g. a line exceeding the buffer (ErrTooLong)
 		pr.Close()
 		// Wait reaps the child and releases fds; guard the terminal send so a
 		// consumer that stopped reading (e.g. on quit) can't strand this goroutine.
 		werr := cmd.Wait()
+		if scanErr != nil {
+			// A read failure is the real cause; surface it clearly instead of the
+			// opaque broken-pipe error the killed child would otherwise report.
+			werr = fmt.Errorf("reading brew output: %w", scanErr)
+		}
 		select {
 		case ch <- Event{Done: true, Err: werr}:
 		case <-ctx.Done():

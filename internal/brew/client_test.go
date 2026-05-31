@@ -68,7 +68,8 @@ func (f *fakeRunner) Output(_ context.Context, args ...string) ([]byte, []byte, 
 	return nil, nil, nil
 }
 
-func (f *fakeRunner) Stream(ctx context.Context, _ ...string) (<-chan Event, error) {
+func (f *fakeRunner) Stream(ctx context.Context, args ...string) (<-chan Event, error) {
+	f.lastArgs = args
 	if f.streamErr != nil {
 		return nil, f.streamErr
 	}
@@ -333,6 +334,39 @@ func TestDoctorRunFailureSurfaces(t *testing.T) {
 	}
 	if report != nil {
 		t.Errorf("expected nil report on run failure, got %+v", report)
+	}
+}
+
+// The "--" end-of-options guard must sit immediately before any user-controlled
+// operand so a value like "--macports" or "-rf" can never be read as a brew flag.
+func TestEndOfOptionsGuard(t *testing.T) {
+	fr := &fakeRunner{t: t}
+	c := NewWithRunner(fr)
+
+	if _, err := c.Search(context.Background(), "--macports", KindFormula, false); err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	assertGuarded(t, "Search", fr.lastArgs, "--macports")
+
+	if _, _, err := c.Info(context.Background(), "-rf", KindFormula); err != nil {
+		t.Fatalf("Info: %v", err)
+	}
+	assertGuarded(t, "Info", fr.lastArgs, "-rf")
+
+	if _, err := c.Upgrade(context.Background(), "pkg"); err != nil {
+		t.Fatalf("Upgrade: %v", err)
+	}
+	if len(fr.lastArgs) < 2 || fr.lastArgs[0] != "upgrade" || fr.lastArgs[1] != "--" {
+		t.Errorf("Upgrade args %v must insert '--' right after the subcommand", fr.lastArgs)
+	}
+}
+
+// assertGuarded checks args end with the sequence ["--", operand].
+func assertGuarded(t *testing.T, what string, args []string, operand string) {
+	t.Helper()
+	n := len(args)
+	if n < 2 || args[n-2] != "--" || args[n-1] != operand {
+		t.Errorf(`%s args %v must end with ["--", %q]`, what, args, operand)
 	}
 }
 
