@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	teatest "github.com/charmbracelet/x/exp/teatest/v2"
 
-	"github.com/vasylenko/brew-tui/internal/brew"
+	"github.com/vasylenko/cellarman/internal/brew"
 )
 
 // fullBrew is a fake with data for every view, so an end-to-end run renders real

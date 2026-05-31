@@ -10,7 +10,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/vasylenko/brew-tui/internal/brew"
+	"github.com/vasylenko/cellarman/internal/brew"
 )
 
 // upgradeKeys are this view's local bindings.

@@ -3,7 +3,7 @@ package ui
 import (
 	"context"
 
-	"github.com/vasylenko/brew-tui/internal/brew"
+	"github.com/vasylenko/cellarman/internal/brew"
 )
 
 // Brew is the slice of the brew client the UI depends on. Declaring it on the

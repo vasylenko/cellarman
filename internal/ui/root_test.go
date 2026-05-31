@@ -5,7 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/vasylenko/brew-tui/internal/brew"
+	"github.com/vasylenko/cellarman/internal/brew"
 )
 
 func sizedRoot(t *testing.T) Root {

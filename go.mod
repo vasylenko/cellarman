@@ -1,4 +1,4 @@
-module github.com/vasylenko/brew-tui
+module github.com/vasylenko/cellarman
 
 go 1.25.0
 

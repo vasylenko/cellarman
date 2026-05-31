@@ -1,5 +1,5 @@
-BIN := brew-tui
-PKG := ./cmd/brew-tui
+BIN := cellarman
+PKG := ./cmd/cellarman
 
 .PHONY: build run test test-integration vet fmt tidy clean
 

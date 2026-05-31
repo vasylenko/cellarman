@@ -1,6 +1,6 @@
 # Build output
 /bin/
-/brew-tui
+/cellarman
 /dist/
 *.out
 

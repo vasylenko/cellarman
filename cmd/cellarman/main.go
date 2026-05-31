@@ -1,4 +1,4 @@
-// Command brew-tui is a terminal UI for Homebrew: browse installed packages,
+// Command cellarman is a terminal UI for Homebrew: browse installed packages,
 // search, upgrade, and run diagnostics.
 package main
 
@@ -8,13 +8,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/vasylenko/brew-tui/internal/brew"
-	"github.com/vasylenko/brew-tui/internal/ui"
+	"github.com/vasylenko/cellarman/internal/brew"
+	"github.com/vasylenko/cellarman/internal/ui"
 )
 
 func main() {
 	if _, err := tea.NewProgram(ui.NewRoot(brew.New())).Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "brew-tui:", err)
+		fmt.Fprintln(os.Stderr, "cellarman:", err)
 		os.Exit(1)
 	}
 }

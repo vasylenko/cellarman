@@ -3,7 +3,7 @@ package ui
 import (
 	"context"
 
-	"github.com/vasylenko/brew-tui/internal/brew"
+	"github.com/vasylenko/cellarman/internal/brew"
 )
 
 // fakeBrew is an in-memory Brew for view tests: load Cmds resolve synchronously
