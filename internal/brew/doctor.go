@@ -33,8 +33,11 @@ func parseDoctor(s string) *DoctorReport {
 		if current == nil {
 			continue // preamble before the first warning
 		}
-		if detail := strings.TrimSpace(line); detail != "" {
-			current.Details = append(current.Details, detail)
+		// Preserve leading indentation: brew indents the affected items (the
+		// formulae/paths the warning is about) under flush-left prose, and the UI
+		// uses that indentation to highlight them as the actual problem items.
+		if strings.TrimSpace(line) != "" {
+			current.Details = append(current.Details, strings.TrimRight(line, " \t"))
 		}
 	}
 	flush()

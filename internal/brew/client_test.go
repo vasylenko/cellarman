@@ -236,6 +236,19 @@ func TestDoctorWarnings(t *testing.T) {
 			}
 		}
 	}
+	// The affected item brew indented must be preserved WITH its indentation so
+	// the UI can highlight it as the actual problem.
+	var foundIndentedItem bool
+	for _, w := range report.Warnings {
+		for _, d := range w.Details {
+			if strings.TrimSpace(d) == "tflint" && d != strings.TrimSpace(d) {
+				foundIndentedItem = true
+			}
+		}
+	}
+	if !foundIndentedItem {
+		t.Error("expected the indented affected item 'tflint' to be preserved")
+	}
 }
 
 func TestDoctorOK(t *testing.T) {
@@ -257,6 +270,22 @@ func TestOutputErrorIncludesStderr(t *testing.T) {
 	}
 	if got := err.Error(); !strings.Contains(got, "No such formula") {
 		t.Errorf("error %q should include stderr", got)
+	}
+}
+
+func TestParseDescriptions(t *testing.T) {
+	// Formula descriptions are kept verbatim, including a legitimate leading "(".
+	f := parseDescriptions([]byte("wget: Internet file retriever\nbyacc: (Arguably) the best yacc variant\n"), KindFormula)
+	if f["wget"] != "Internet file retriever" {
+		t.Errorf("wget = %q", f["wget"])
+	}
+	if f["byacc"] != "(Arguably) the best yacc variant" {
+		t.Errorf("formula leading parenthetical must be kept, got %q", f["byacc"])
+	}
+	// Cask lines carry a redundant "(Human Name)" that is stripped.
+	c := parseDescriptions([]byte("firefox: (Mozilla Firefox) Web browser\n"), KindCask)
+	if c["firefox"] != "Web browser" {
+		t.Errorf("cask (Name) prefix should be stripped, got %q", c["firefox"])
 	}
 }
 

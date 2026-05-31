@@ -96,6 +96,17 @@ func TestIntegrationSearch(t *testing.T) {
 	}
 }
 
+func TestIntegrationDescriptions(t *testing.T) {
+	descs, err := New().Descriptions(testCtx(t), []string{"wget", "jq"}, KindFormula)
+	if err != nil {
+		t.Fatalf("Descriptions: %v", err)
+	}
+	t.Logf("descs: %v", descs)
+	if descs["wget"] == "" {
+		t.Errorf("expected a description for wget, got %v", descs)
+	}
+}
+
 func TestIntegrationDoctor(t *testing.T) {
 	report, err := New().Doctor(testCtx(t))
 	if err != nil {

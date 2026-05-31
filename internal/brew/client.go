@@ -149,6 +149,30 @@ func (c *Client) Search(ctx context.Context, term string, kind Kind, evalAll boo
 	return parseSearch(stdout), nil
 }
 
+// Descriptions returns a name→one-line-description map for the given packages,
+// read from brew's local description cache (no install, no network). Tapped
+// packages are keyed by their short name (brew desc drops the tap prefix), so
+// callers should look up by short name. Unknown names are simply absent.
+func (c *Client) Descriptions(ctx context.Context, names []string, kind Kind) (map[string]string, error) {
+	if len(names) == 0 {
+		return map[string]string{}, nil
+	}
+	args := []string{"desc"}
+	if kind == KindCask {
+		args = append(args, "--cask")
+	} else {
+		args = append(args, "--formula")
+	}
+	args = append(args, "--")
+	args = append(args, names...)
+
+	stdout, stderr, err := c.r.Output(ctx, args...)
+	if err != nil {
+		return nil, cmdErr("desc", stderr, err)
+	}
+	return parseDescriptions(stdout, kind), nil
+}
+
 // Doctor runs `brew doctor` and parses its free-form warnings. A non-zero exit
 // WITH output means warnings exist — expected, not a failure — so that exit code
 // is ignored. A genuine failure to run brew (an error and no output at all) is
@@ -208,6 +232,30 @@ func parseSearch(b []byte) []string {
 		names = append(names, line)
 	}
 	return names
+}
+
+// parseDescriptions turns `brew desc` output ("name: description" per line)
+// into a map. Cask lines are "token: (Human Name) description"; that redundant
+// parenthetical name is stripped — but ONLY for casks, since a formula's
+// description can legitimately begin with a parenthetical (e.g. "(GNU) ...").
+func parseDescriptions(b []byte, kind Kind) map[string]string {
+	out := make(map[string]string)
+	for _, line := range strings.Split(string(b), "\n") {
+		name, desc, ok := strings.Cut(line, ": ")
+		if !ok {
+			continue
+		}
+		name, desc = strings.TrimSpace(name), strings.TrimSpace(desc)
+		if kind == KindCask && strings.HasPrefix(desc, "(") {
+			if i := strings.Index(desc, ") "); i >= 0 {
+				desc = strings.TrimSpace(desc[i+2:])
+			}
+		}
+		if name != "" && desc != "" {
+			out[name] = desc
+		}
+	}
+	return out
 }
 
 // cmdErr wraps an exec failure with the brew subcommand and its stderr, which
