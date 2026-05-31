@@ -1,4 +1,4 @@
-module github.com/serhii-vasylenko/brew-tui
+module github.com/vasylenko/brew-tui
 
 go 1.25.0
 

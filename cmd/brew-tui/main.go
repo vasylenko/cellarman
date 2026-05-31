@@ -8,8 +8,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/serhii-vasylenko/brew-tui/internal/brew"
-	"github.com/serhii-vasylenko/brew-tui/internal/ui"
+	"github.com/vasylenko/brew-tui/internal/brew"
+	"github.com/vasylenko/brew-tui/internal/ui"
 )
 
 func main() {

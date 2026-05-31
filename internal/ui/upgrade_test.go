@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/serhii-vasylenko/brew-tui/internal/brew"
+	"github.com/vasylenko/brew-tui/internal/brew"
 )
 
 // outdatedBrew is a fake with one outdated formula and a canned upgrade stream.

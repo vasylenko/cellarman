@@ -15,7 +15,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	teatest "github.com/charmbracelet/x/exp/teatest/v2"
 
-	"github.com/serhii-vasylenko/brew-tui/internal/brew"
+	"github.com/vasylenko/brew-tui/internal/brew"
 )
 
 func TestE2ERealBrew(t *testing.T) {
