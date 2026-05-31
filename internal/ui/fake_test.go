@@ -18,7 +18,9 @@ type fakeBrew struct {
 	infoFormula *brew.Formula
 	infoCask    *brew.Cask
 	err         error
-	events      []brew.Event // streamed lines for Upgrade/Cleanup/Autoremove
+	events      []brew.Event    // streamed lines for Upgrade/Cleanup/Autoremove
+	streamErr   error           // when set, stream starts fail (os.Pipe/cmd.Start equivalent)
+	upgradeCtx  context.Context // captured so abort tests can observe cancellation
 }
 
 func (f *fakeBrew) Installed(context.Context) ([]brew.Formula, []brew.Cask, error) {
@@ -66,11 +68,25 @@ func (f *fakeBrew) Doctor(context.Context) (*brew.DoctorReport, error) {
 	return f.doctor, nil
 }
 
-func (f *fakeBrew) Upgrade(context.Context, ...string) (<-chan brew.Event, error) {
+func (f *fakeBrew) Upgrade(ctx context.Context, _ ...string) (<-chan brew.Event, error) {
+	f.upgradeCtx = ctx
+	if f.streamErr != nil {
+		return nil, f.streamErr
+	}
 	return f.stream(), nil
 }
-func (f *fakeBrew) Cleanup(context.Context) (<-chan brew.Event, error)    { return f.stream(), nil }
-func (f *fakeBrew) Autoremove(context.Context) (<-chan brew.Event, error) { return f.stream(), nil }
+func (f *fakeBrew) Cleanup(context.Context) (<-chan brew.Event, error) {
+	if f.streamErr != nil {
+		return nil, f.streamErr
+	}
+	return f.stream(), nil
+}
+func (f *fakeBrew) Autoremove(context.Context) (<-chan brew.Event, error) {
+	if f.streamErr != nil {
+		return nil, f.streamErr
+	}
+	return f.stream(), nil
+}
 
 // stream replays canned line events followed by a terminal Done on a buffered,
 // already-closed channel — consumers drain it without a live goroutine.

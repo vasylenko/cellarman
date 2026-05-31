@@ -136,18 +136,23 @@ func (m diagnoseModel) handleKey(msg tea.KeyPressMsg) (child, tea.Cmd) {
 		return m, cmd
 	}
 
-	switch {
-	case key.Matches(msg, diagnoseKeys.Recheck):
+	// Recheck re-runs doctor and doubles as the error-state recovery key.
+	if key.Matches(msg, diagnoseKeys.Recheck) {
 		m.state = stateLoading
 		return m, tea.Batch(m.spinner.Tick, m.load())
+	}
+
+	// In the error state only Recheck is honored — a fix must not run against a
+	// doctor that just failed (mirrors browse/upgrade/search error handling).
+	if m.state == stateError {
+		return m, nil
+	}
+
+	switch {
 	case key.Matches(msg, diagnoseKeys.Cleanup):
 		return m.startFix("Cleaning up", m.brew.Cleanup)
 	case key.Matches(msg, diagnoseKeys.Autoremove):
 		return m.startFix("Removing unused dependencies", m.brew.Autoremove)
-	}
-
-	if m.state == stateError {
-		return m, nil
 	}
 
 	var cmd tea.Cmd
@@ -170,10 +175,10 @@ func (m diagnoseModel) startFix(label string, starter streamStarter) (child, tea
 
 func (m diagnoseModel) View() string {
 	switch m.state {
-	case stateError:
-		return errorStyle.Render("Error: "+m.err.Error()) + "\n\n" + hintStyle.Render("press r to retry")
 	case stateLoading:
 		return fmt.Sprintf("%s Running brew doctor…", m.spinner.View())
+	case stateError:
+		return errorStyle.Render("Error: "+m.err.Error()) + "\n\n" + hintStyle.Render("press r to retry")
 	}
 
 	if m.running {

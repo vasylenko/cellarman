@@ -80,6 +80,13 @@ type searchModel struct {
 type searchResultsMsg struct{ names []string }
 type searchErrMsg struct{ err error }
 
+// searchDetailMsg carries hydrated Info for the selected result, fetched off the
+// event loop so a slow (possibly network-bound) `brew info` never freezes the UI.
+type searchDetailMsg struct {
+	formula *brew.Formula
+	cask    *brew.Cask
+}
+
 func newSearchView(b Brew) child {
 	ti := textinput.New()
 	ti.Placeholder = "search packages"
@@ -132,6 +139,22 @@ func (m searchModel) Update(msg tea.Msg) (child, tea.Cmd) {
 
 	case searchErrMsg:
 		m.err, m.state = msg.err, stateError
+		return m, nil
+
+	case searchDetailMsg:
+		m.state = stateLoaded
+		var content string
+		switch {
+		case msg.formula != nil:
+			content = renderFormula(*msg.formula)
+		case msg.cask != nil:
+			content = renderCask(*msg.cask)
+		}
+		if content != "" {
+			m.detail.SetContent(content)
+			m.detail.GotoTop()
+			m.showing = true
+		}
 		return m, nil
 
 	case spinner.TickMsg:
@@ -187,10 +210,7 @@ func (m searchModel) handleKey(msg tea.KeyPressMsg) (child, tea.Cmd) {
 	}
 
 	switch {
-	case key.Matches(msg, searchKeys.Edit):
-		m.input.Focus()
-		return m, nil
-	case key.Matches(msg, searchKeys.Back):
+	case key.Matches(msg, searchKeys.Edit), key.Matches(msg, searchKeys.Back):
 		m.input.Focus()
 		return m, nil
 	case key.Matches(msg, searchKeys.NextSection):
@@ -217,33 +237,29 @@ func (m searchModel) switchSection(delta int) (child, tea.Cmd) {
 	return m, tea.Batch(m.spinner.Tick, m.search(m.term, m.section))
 }
 
-// openDetail hydrates the highlighted name via Info (search returns names only)
-// and renders it into the viewport, reusing browse's formula/cask renderers.
+// openDetail hydrates the highlighted result via Info (search returns names only)
+// in the background, then renders it into the viewport. The fetch runs in a
+// tea.Cmd — never inline — because `brew info` for a non-installed package can hit
+// the Homebrew API and would otherwise freeze the whole UI.
 func (m searchModel) openDetail() (child, tea.Cmd) {
 	row := m.table.SelectedRow()
 	if len(row) == 0 {
 		return m, nil
 	}
-	name := row[0]
-	f, c, err := m.brew.Info(context.Background(), name, m.section.kind())
-	if err != nil {
-		m.err, m.state = err, stateError
-		return m, nil
+	m.state = stateLoading
+	return m, tea.Batch(m.spinner.Tick, m.detailCmd(row[0], m.section.kind()))
+}
+
+// detailCmd fetches full info for a result off the event loop.
+func (m searchModel) detailCmd(name string, kind brew.Kind) tea.Cmd {
+	b := m.brew
+	return func() tea.Msg {
+		f, c, err := b.Info(context.Background(), name, kind)
+		if err != nil {
+			return searchErrMsg{err}
+		}
+		return searchDetailMsg{formula: f, cask: c}
 	}
-	var content string
-	switch {
-	case f != nil:
-		content = renderFormula(*f)
-	case c != nil:
-		content = renderCask(*c)
-	}
-	if content == "" {
-		return m, nil
-	}
-	m.detail.SetContent(content)
-	m.detail.GotoTop()
-	m.showing = true
-	return m, nil
 }
 
 func (m searchModel) View() string {

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -99,5 +100,55 @@ func TestUpgradeStreamsToCompletion(t *testing.T) {
 	}
 	if !strings.Contains(um.logBuf, "==> Upgrading gnutls") || !strings.Contains(um.logBuf, "done") {
 		t.Errorf("log should contain the streamed lines:\n%s", um.logBuf)
+	}
+}
+
+// A stream that fails to start must leave the view recoverable: upgrading is
+// reset so the error-state retry key is reachable (regression guard).
+func TestUpgradeRecoversFromStreamStartFailure(t *testing.T) {
+	b := outdatedBrew()
+	b.streamErr = errors.New("cannot start brew upgrade")
+	m := loadedUpgrade(t, b)
+
+	m, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // attempt upgrade
+	if cmd == nil {
+		t.Fatal("starting an upgrade should issue a stream command")
+	}
+	m, _ = m.Update(cmd()) // startStream's onErr resolves to upgradeErrMsg
+
+	um := m.(upgradeModel)
+	if um.state != stateError {
+		t.Fatalf("a stream-start failure should land in error state, got %d", um.state)
+	}
+	if um.upgrading {
+		t.Fatal("upgrading must reset so the retry key is reachable")
+	}
+
+	m, cmd = m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	if m.(upgradeModel).state != stateLoading {
+		t.Fatal("r should retry from the error state (would be swallowed if still upgrading)")
+	}
+	if cmd == nil {
+		t.Fatal("retry should issue a reload command")
+	}
+}
+
+// esc during an upgrade cancels the context bound to the brew command.
+func TestUpgradeAbortCancelsContext(t *testing.T) {
+	b := outdatedBrew()
+	m := loadedUpgrade(t, b)
+
+	m, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // start upgrade
+	m, _ = m.Update(cmd())                                  // startStream calls b.Upgrade(ctx) -> upgradeStartedMsg
+	if b.upgradeCtx == nil {
+		t.Fatal("Upgrade should have been called with a context")
+	}
+	if b.upgradeCtx.Err() != nil {
+		t.Fatal("context should be live before abort")
+	}
+
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEsc}) // abort
+	if b.upgradeCtx.Err() == nil {
+		t.Fatal("esc should cancel the in-flight upgrade context")
 	}
 }

@@ -75,10 +75,15 @@ func TestSearchOpenDetailHydrates(t *testing.T) {
 		infoFormula: &brew.Formula{Name: "wget", Versions: brew.Versions{Stable: "1.21"}, Desc: "retriever"},
 	})
 	m = runSearch(t, m, "wget")
-	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // open the highlighted result
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // start hydrating the result
 	sm := m.(searchModel)
+	if sm.state != stateLoading {
+		t.Fatal("opening a result should fetch its detail asynchronously (loading state)")
+	}
+	m, _ = m.Update(sm.detailCmd("wget", sm.section.kind())()) // resolve Info, feed detail back
+	sm = m.(searchModel)
 	if !sm.showing {
-		t.Fatal("enter on a result should open the detail panel")
+		t.Fatal("detail panel should open once Info resolves")
 	}
 	if !strings.Contains(sm.detail.View(), "retriever") {
 		t.Errorf("detail should contain hydrated info:\n%s", sm.detail.View())

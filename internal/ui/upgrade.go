@@ -96,10 +96,18 @@ func (m upgradeModel) Update(msg tea.Msg) (child, tea.Cmd) {
 	case upgradeDataMsg:
 		m.setRows(msg.report)
 		m.state = stateLoaded
+		m.done = false // fresh outdated list supersedes any completed-upgrade log
 		m.refreshTable()
 		return m, nil
 
 	case upgradeErrMsg:
+		// Reset the in-flight flag (and any cancel) so the error view's retry is
+		// reachable — handleKey's `if m.upgrading` guard would otherwise swallow it.
+		if m.cancel != nil {
+			m.cancel()
+			m.cancel = nil
+		}
+		m.upgrading = false
 		m.err, m.state = msg.err, stateError
 		return m, nil
 
