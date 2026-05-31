@@ -1,4 +1,5 @@
 # Build output
+/bin/
 /brew-tui
 /dist/
 *.out
