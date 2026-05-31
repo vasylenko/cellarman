@@ -12,8 +12,8 @@ run: ## run the TUI
 test: ## unit + view tests (no real brew)
 	go test ./...
 
-test-integration: ## tests that exercise the real brew binary
-	go test -tags integration ./internal/brew/
+test-integration: ## tests that exercise the real brew binary (client + UI e2e)
+	go test -tags integration ./...
 
 vet:
 	go vet ./...

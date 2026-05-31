@@ -56,5 +56,5 @@ Unit tests cover brew output parsing and each view's state transitions; teatest 
 ## Limitations
 
 - Doctor offers only non-destructive fixes (`cleanup`, `autoremove`). It does not auto-remediate every warning — many need a human decision.
-- Quitting mid-upgrade tears down with the process; the in-flight `brew upgrade` is cancelled via context, not gracefully resumed.
+- Quitting does not cancel a running `brew` command — it keeps going in the background until it finishes. Abort an in-progress upgrade with `esc` first if you want to stop it; cleanup/autoremove in Diagnose run to completion.
 - Outdated-cask parsing assumes the same `--json=v2` shape as formulae (Homebrew's documented schema).
