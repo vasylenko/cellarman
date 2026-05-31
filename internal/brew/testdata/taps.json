@@ -1,0 +1,18 @@
+[
+  {
+    "name": "homebrew/core",
+    "official": true,
+    "installed": true,
+    "remote": "https://github.com/Homebrew/homebrew-core",
+    "formula_names": ["go", "gnutls", "jq"],
+    "cask_tokens": []
+  },
+  {
+    "name": "hashicorp/tap",
+    "official": false,
+    "installed": true,
+    "remote": "https://github.com/hashicorp/homebrew-tap",
+    "formula_names": ["terraform", "vault"],
+    "cask_tokens": []
+  }
+]

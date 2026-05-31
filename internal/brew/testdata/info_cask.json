@@ -1,0 +1,19 @@
+{
+  "formulae": [],
+  "casks": [
+    {
+      "token": "google-chrome",
+      "full_token": "google-chrome",
+      "tap": "homebrew/cask",
+      "name": ["Google Chrome"],
+      "desc": "Web browser",
+      "homepage": "https://www.google.com/chrome/",
+      "version": "131.0.6778.86",
+      "installed": null,
+      "outdated": false,
+      "deprecated": false,
+      "auto_updates": true,
+      "caveats": null
+    }
+  ]
+}

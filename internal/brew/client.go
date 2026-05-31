@@ -1,0 +1,273 @@
+// Package brew is a typed client over the Homebrew CLI. It shells out to the
+// `brew` binary and parses its JSON (and, for doctor, text) output. Shelling
+// out — rather than reimplementing Homebrew's resolution logic — keeps the tool
+// honest: it always reflects exactly what the user's brew would do.
+package brew
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+)
+
+const defaultBin = "brew"
+
+// Runner executes brew subcommands. It is an interface so tests can supply
+// recorded fixtures instead of spawning real processes.
+type Runner interface {
+	// Output runs brew to completion, returning stdout and stderr separately.
+	// They are split because brew interleaves JSON on stdout with progress and
+	// API-download notices on stderr; the parser must only see stdout.
+	Output(ctx context.Context, args ...string) (stdout, stderr []byte, err error)
+	// Stream runs a long command (upgrade, cleanup) and emits combined output
+	// line by line, closing the channel after a terminal Done event.
+	Stream(ctx context.Context, args ...string) (<-chan Event, error)
+}
+
+// Event is one unit of streamed command output. Done marks the final event and
+// carries the command's exit error (nil on success).
+type Event struct {
+	Line string
+	Done bool
+	Err  error
+}
+
+// Client is the typed brew API used by the rest of the app.
+type Client struct {
+	r Runner
+}
+
+// New returns a Client backed by the real `brew` binary on PATH.
+func New() *Client { return &Client{r: &execRunner{bin: defaultBin}} }
+
+// NewWithRunner injects a custom Runner; used by tests.
+func NewWithRunner(r Runner) *Client { return &Client{r: r} }
+
+// infoResponse is the `brew info --json=v2` envelope shared by every info call.
+type infoResponse struct {
+	Formulae []Formula `json:"formulae"`
+	Casks    []Cask    `json:"casks"`
+}
+
+// Installed returns every installed formula and cask in a single brew call.
+// `brew info --json=v2 --installed` reads local metadata, so it stays fast even
+// with hundreds of packages and avoids N per-package info calls.
+func (c *Client) Installed(ctx context.Context) ([]Formula, []Cask, error) {
+	stdout, stderr, err := c.r.Output(ctx, "info", "--json=v2", "--installed")
+	if err != nil {
+		return nil, nil, cmdErr("info --installed", stderr, err)
+	}
+	var resp infoResponse
+	if err := parseJSON(stdout, &resp); err != nil {
+		return nil, nil, fmt.Errorf("parse installed: %w", err)
+	}
+	return resp.Formulae, resp.Casks, nil
+}
+
+// Info fetches full details for a single package. kind selects the brew flag so
+// a formula and a cask sharing a name don't collide.
+func (c *Client) Info(ctx context.Context, name string, kind Kind) (*Formula, *Cask, error) {
+	args := []string{"info", "--json=v2"}
+	if kind == KindCask {
+		args = append(args, "--cask")
+	}
+	args = append(args, name)
+
+	stdout, stderr, err := c.r.Output(ctx, args...)
+	if err != nil {
+		return nil, nil, cmdErr("info "+name, stderr, err)
+	}
+	var resp infoResponse
+	if err := parseJSON(stdout, &resp); err != nil {
+		return nil, nil, fmt.Errorf("parse info %s: %w", name, err)
+	}
+	if kind == KindCask {
+		if len(resp.Casks) == 0 {
+			return nil, nil, fmt.Errorf("no cask info for %q", name)
+		}
+		return nil, &resp.Casks[0], nil
+	}
+	if len(resp.Formulae) == 0 {
+		return nil, nil, fmt.Errorf("no formula info for %q", name)
+	}
+	return &resp.Formulae[0], nil, nil
+}
+
+// Taps lists installed taps with their formula/cask counts and origin.
+func (c *Client) Taps(ctx context.Context) ([]Tap, error) {
+	stdout, stderr, err := c.r.Output(ctx, "tap-info", "--installed", "--json")
+	if err != nil {
+		return nil, cmdErr("tap-info", stderr, err)
+	}
+	var taps []Tap
+	if err := parseJSON(stdout, &taps); err != nil {
+		return nil, fmt.Errorf("parse taps: %w", err)
+	}
+	return taps, nil
+}
+
+// Outdated lists packages with a newer version available.
+func (c *Client) Outdated(ctx context.Context) (*OutdatedReport, error) {
+	stdout, stderr, err := c.r.Output(ctx, "outdated", "--json=v2")
+	if err != nil {
+		return nil, cmdErr("outdated", stderr, err)
+	}
+	var report OutdatedReport
+	if err := parseJSON(stdout, &report); err != nil {
+		return nil, fmt.Errorf("parse outdated: %w", err)
+	}
+	return &report, nil
+}
+
+// Search returns package names matching term. evalAll widens the search to
+// third-party taps' contents (off by default because it is noticeably slower).
+func (c *Client) Search(ctx context.Context, term string, kind Kind, evalAll bool) ([]string, error) {
+	args := []string{"search"}
+	if kind == KindCask {
+		args = append(args, "--cask")
+	} else {
+		args = append(args, "--formula")
+	}
+	if evalAll {
+		args = append(args, "--eval-all")
+	}
+	args = append(args, term)
+
+	stdout, stderr, err := c.r.Output(ctx, args...)
+	if err != nil {
+		return nil, cmdErr("search "+term, stderr, err)
+	}
+	return parseSearch(stdout), nil
+}
+
+// Doctor runs `brew doctor` and parses its free-form warnings. A non-zero exit
+// is expected when warnings exist, so the exec error is intentionally ignored;
+// only a failure to run brew at all surfaces (as empty output + parse).
+func (c *Client) Doctor(ctx context.Context) (*DoctorReport, error) {
+	stdout, stderr, _ := c.r.Output(ctx, "doctor")
+	// brew doctor writes warnings to stderr and the all-clear to stdout.
+	combined := strings.TrimSpace(string(stdout) + "\n" + string(stderr))
+	return parseDoctor(combined), nil
+}
+
+// Upgrade upgrades the named packages, or everything outdated when names is
+// empty, streaming brew's progress output.
+func (c *Client) Upgrade(ctx context.Context, names ...string) (<-chan Event, error) {
+	return c.r.Stream(ctx, append([]string{"upgrade"}, names...)...)
+}
+
+// Cleanup removes stale downloads and old versions, streaming progress.
+func (c *Client) Cleanup(ctx context.Context) (<-chan Event, error) {
+	return c.r.Stream(ctx, "cleanup")
+}
+
+// Autoremove uninstalls dependencies no longer required by any package.
+func (c *Client) Autoremove(ctx context.Context) (<-chan Event, error) {
+	return c.r.Stream(ctx, "autoremove")
+}
+
+// parseJSON unmarshals brew JSON, tolerating a stray leading notice line by
+// trimming to the first JSON delimiter only when a direct parse fails.
+func parseJSON(b []byte, v any) error {
+	if err := json.Unmarshal(bytes.TrimSpace(b), v); err == nil {
+		return nil
+	}
+	if i := bytes.IndexAny(b, "{["); i >= 0 {
+		return json.Unmarshal(b[i:], v)
+	}
+	return json.Unmarshal(bytes.TrimSpace(b), v)
+}
+
+// parseSearch turns `brew search` line output into names, dropping the
+// "==> Formulae" section headers and "Warning:" hints brew mixes in.
+func parseSearch(b []byte) []string {
+	var names []string
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "==>") || strings.HasPrefix(line, "Warning:") {
+			continue
+		}
+		names = append(names, line)
+	}
+	return names
+}
+
+// cmdErr wraps an exec failure with the brew subcommand and its stderr, which
+// is where brew puts the actual reason (unknown formula, network error, etc.).
+func cmdErr(what string, stderr []byte, err error) error {
+	msg := strings.TrimSpace(string(stderr))
+	if msg == "" {
+		return fmt.Errorf("brew %s: %w", what, err)
+	}
+	return fmt.Errorf("brew %s: %w: %s", what, err, msg)
+}
+
+// brewEnv runs brew non-interactively and deterministically: no auto-update on
+// every read (slow, surprising), no color codes (would corrupt text parsing),
+// and no env hints cluttering output.
+func brewEnv() []string {
+	return append(os.Environ(),
+		"HOMEBREW_NO_AUTO_UPDATE=1",
+		"HOMEBREW_NO_COLOR=1",
+		"HOMEBREW_NO_ENV_HINTS=1",
+	)
+}
+
+// execRunner is the production Runner backed by os/exec.
+type execRunner struct {
+	bin string
+}
+
+func (r *execRunner) Output(ctx context.Context, args ...string) ([]byte, []byte, error) {
+	cmd := exec.CommandContext(ctx, r.bin, args...)
+	cmd.Env = brewEnv()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return stdout.Bytes(), stderr.Bytes(), err
+}
+
+// Stream wires the child's stdout and stderr to a single OS pipe so progress
+// lines arrive in order. The parent closes its write end after Start so the
+// reader sees EOF once the child exits; CommandContext kills the child if ctx
+// is cancelled (e.g. the user quits mid-upgrade).
+func (r *execRunner) Stream(ctx context.Context, args ...string) (<-chan Event, error) {
+	cmd := exec.CommandContext(ctx, r.bin, args...)
+	cmd.Env = brewEnv()
+
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	cmd.Stdout = pw
+	cmd.Stderr = pw
+
+	if err := cmd.Start(); err != nil {
+		pr.Close()
+		pw.Close()
+		return nil, err
+	}
+	pw.Close() // child holds its own dup; parent must release to get EOF
+
+	ch := make(chan Event)
+	go func() {
+		defer close(ch)
+		scanner := bufio.NewScanner(pr)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			select {
+			case ch <- Event{Line: scanner.Text()}:
+			case <-ctx.Done():
+			}
+		}
+		pr.Close()
+		ch <- Event{Done: true, Err: cmd.Wait()}
+	}()
+	return ch, nil
+}

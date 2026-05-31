@@ -1,0 +1,58 @@
+{
+  "formulae": [
+    {
+      "name": "go",
+      "full_name": "go",
+      "tap": "homebrew/core",
+      "desc": "Open source programming language to build simple/reliable/efficient software",
+      "license": "BSD-3-Clause",
+      "homepage": "https://go.dev/",
+      "versions": { "stable": "1.26.3", "head": "HEAD", "bottle": true },
+      "installed": [
+        { "version": "1.26.3", "installed_on_request": true }
+      ],
+      "outdated": false,
+      "pinned": false,
+      "keg_only": false,
+      "deprecated": false,
+      "caveats": null,
+      "dependencies": [],
+      "build_dependencies": []
+    },
+    {
+      "name": "gnutls",
+      "full_name": "gnutls",
+      "tap": "homebrew/core",
+      "desc": "GNU Transport Layer Security (TLS) Library",
+      "license": "LGPL-2.1-or-later",
+      "homepage": "https://gnutls.org/",
+      "versions": { "stable": "3.8.13_2", "head": null, "bottle": true },
+      "installed": [
+        { "version": "3.8.13_1", "installed_on_request": false }
+      ],
+      "outdated": true,
+      "pinned": false,
+      "keg_only": false,
+      "deprecated": false,
+      "caveats": null,
+      "dependencies": ["gmp", "libidn2", "libtasn1", "nettle", "p11-kit", "unbound"],
+      "build_dependencies": ["pkgconf"]
+    }
+  ],
+  "casks": [
+    {
+      "token": "qlmarkdown",
+      "full_token": "qlmarkdown",
+      "tap": "homebrew/cask",
+      "name": ["sbarex QLMarkdown"],
+      "desc": "Quick Look generator for Markdown files",
+      "homepage": "https://github.com/sbarex/QLMarkdown",
+      "version": "1.5.1",
+      "installed": "1.5.1",
+      "outdated": false,
+      "deprecated": false,
+      "auto_updates": true,
+      "caveats": null
+    }
+  ]
+}

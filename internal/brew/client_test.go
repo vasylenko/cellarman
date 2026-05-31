@@ -1,0 +1,300 @@
+package brew
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func readFixture(t *testing.T, name string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatalf("read fixture %s: %v", name, err)
+	}
+	return b
+}
+
+// fakeRunner routes brew subcommands to recorded fixtures, so client logic is
+// tested without a real brew. doctorFile lets a test pick the warnings vs
+// all-clear output; outErr forces the failure path.
+type fakeRunner struct {
+	t           *testing.T
+	doctorFile  string
+	outErr      error
+	outStderr   string
+	streamLines []string
+	streamErr   error
+}
+
+func (f *fakeRunner) Output(_ context.Context, args ...string) ([]byte, []byte, error) {
+	if f.outErr != nil {
+		return nil, []byte(f.outStderr), f.outErr
+	}
+	has := func(want string) bool {
+		for _, a := range args {
+			if a == want {
+				return true
+			}
+		}
+		return false
+	}
+	switch args[0] {
+	case "info":
+		switch {
+		case has("--installed"):
+			return readFixture(f.t, "installed.json"), nil, nil
+		case has("--cask"):
+			return readFixture(f.t, "info_cask.json"), nil, nil
+		default:
+			return readFixture(f.t, "info_formula.json"), nil, nil
+		}
+	case "tap-info":
+		return readFixture(f.t, "taps.json"), nil, nil
+	case "outdated":
+		return readFixture(f.t, "outdated.json"), nil, nil
+	case "search":
+		return readFixture(f.t, "search_formula.txt"), nil, nil
+	case "doctor":
+		return readFixture(f.t, f.doctorFile), nil, nil
+	}
+	f.t.Fatalf("fakeRunner: unexpected args %v", args)
+	return nil, nil, nil
+}
+
+func (f *fakeRunner) Stream(ctx context.Context, _ ...string) (<-chan Event, error) {
+	if f.streamErr != nil {
+		return nil, f.streamErr
+	}
+	ch := make(chan Event)
+	go func() {
+		defer close(ch)
+		for _, line := range f.streamLines {
+			select {
+			case ch <- Event{Line: line}:
+			case <-ctx.Done():
+				return
+			}
+		}
+		ch <- Event{Done: true}
+	}()
+	return ch, nil
+}
+
+func TestInstalled(t *testing.T) {
+	c := NewWithRunner(&fakeRunner{t: t})
+	formulae, casks, err := c.Installed(context.Background())
+	if err != nil {
+		t.Fatalf("Installed: %v", err)
+	}
+	if len(formulae) != 2 {
+		t.Fatalf("formulae = %d, want 2", len(formulae))
+	}
+	if len(casks) != 1 {
+		t.Fatalf("casks = %d, want 1", len(casks))
+	}
+
+	gnutls := formulae[1]
+	if got := gnutls.InstalledVersion(); got != "3.8.13_1" {
+		t.Errorf("InstalledVersion = %q, want 3.8.13_1", got)
+	}
+	if !gnutls.IsInstalled() {
+		t.Error("gnutls should be installed")
+	}
+	if !gnutls.Outdated {
+		t.Error("gnutls should be outdated")
+	}
+	if len(gnutls.Dependencies) != 6 {
+		t.Errorf("gnutls deps = %d, want 6", len(gnutls.Dependencies))
+	}
+
+	cask := casks[0]
+	if !cask.IsInstalled() {
+		t.Error("qlmarkdown should be installed")
+	}
+	if got := cask.DisplayName(); got != "sbarex QLMarkdown" {
+		t.Errorf("DisplayName = %q, want 'sbarex QLMarkdown'", got)
+	}
+}
+
+func TestInfoFormula(t *testing.T) {
+	c := NewWithRunner(&fakeRunner{t: t})
+	f, cask, err := c.Info(context.Background(), "jq", KindFormula)
+	if err != nil {
+		t.Fatalf("Info: %v", err)
+	}
+	if cask != nil {
+		t.Fatal("expected nil cask for formula query")
+	}
+	if f.Name != "jq" || f.Versions.Stable != "1.8.1" {
+		t.Errorf("got %q %q, want jq 1.8.1", f.Name, f.Versions.Stable)
+	}
+	if f.IsInstalled() {
+		t.Error("jq fixture should not be installed")
+	}
+}
+
+func TestInfoCask(t *testing.T) {
+	c := NewWithRunner(&fakeRunner{t: t})
+	f, cask, err := c.Info(context.Background(), "google-chrome", KindCask)
+	if err != nil {
+		t.Fatalf("Info: %v", err)
+	}
+	if f != nil {
+		t.Fatal("expected nil formula for cask query")
+	}
+	if cask.Token != "google-chrome" || cask.DisplayName() != "Google Chrome" {
+		t.Errorf("got %q %q", cask.Token, cask.DisplayName())
+	}
+	if cask.IsInstalled() {
+		t.Error("chrome fixture (installed:null) should not be installed")
+	}
+}
+
+func TestTaps(t *testing.T) {
+	c := NewWithRunner(&fakeRunner{t: t})
+	taps, err := c.Taps(context.Background())
+	if err != nil {
+		t.Fatalf("Taps: %v", err)
+	}
+	if len(taps) != 2 {
+		t.Fatalf("taps = %d, want 2", len(taps))
+	}
+	if !taps[0].Official {
+		t.Error("homebrew/core should be official")
+	}
+	if got := taps[1].FormulaCount(); got != 2 {
+		t.Errorf("hashicorp/tap formula count = %d, want 2", got)
+	}
+}
+
+func TestOutdated(t *testing.T) {
+	c := NewWithRunner(&fakeRunner{t: t})
+	report, err := c.Outdated(context.Background())
+	if err != nil {
+		t.Fatalf("Outdated: %v", err)
+	}
+	if report.Total() != 3 {
+		t.Fatalf("total = %d, want 3", report.Total())
+	}
+	tf := report.Formulae[1]
+	if tf.Name != "hashicorp/tap/terraform" {
+		t.Errorf("tapped formula name = %q", tf.Name)
+	}
+	if got := tf.InstalledVersion(); got != "1.15.3" {
+		t.Errorf("installed version = %q, want 1.15.3", got)
+	}
+}
+
+func TestSearch(t *testing.T) {
+	c := NewWithRunner(&fakeRunner{t: t})
+	names, err := c.Search(context.Background(), "wget", KindFormula, false)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	want := []string{"wget", "wget2", "wgetpaste"}
+	if len(names) != len(want) {
+		t.Fatalf("names = %v, want %v", names, want)
+	}
+	for i := range want {
+		if names[i] != want[i] {
+			t.Errorf("names[%d] = %q, want %q", i, names[i], want[i])
+		}
+	}
+}
+
+func TestDoctorWarnings(t *testing.T) {
+	c := NewWithRunner(&fakeRunner{t: t, doctorFile: "doctor_warnings.txt"})
+	report, err := c.Doctor(context.Background())
+	if err != nil {
+		t.Fatalf("Doctor: %v", err)
+	}
+	if report.OK {
+		t.Error("report should not be OK with warnings")
+	}
+	if len(report.Warnings) != 2 {
+		t.Fatalf("warnings = %d, want 2", len(report.Warnings))
+	}
+	if report.Warnings[0].Title != "Some installed kegs have no formulae!" {
+		t.Errorf("warning title = %q", report.Warnings[0].Title)
+	}
+	if len(report.Warnings[0].Details) == 0 {
+		t.Error("first warning should have details")
+	}
+}
+
+func TestDoctorOK(t *testing.T) {
+	c := NewWithRunner(&fakeRunner{t: t, doctorFile: "doctor_ok.txt"})
+	report, err := c.Doctor(context.Background())
+	if err != nil {
+		t.Fatalf("Doctor: %v", err)
+	}
+	if !report.OK || len(report.Warnings) != 0 {
+		t.Errorf("expected OK with no warnings, got OK=%v n=%d", report.OK, len(report.Warnings))
+	}
+}
+
+func TestOutputErrorIncludesStderr(t *testing.T) {
+	c := NewWithRunner(&fakeRunner{t: t, outErr: errors.New("exit 1"), outStderr: "Error: No such formula"})
+	_, _, err := c.Installed(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got := err.Error(); !strings.Contains(got, "No such formula") {
+		t.Errorf("error %q should include stderr", got)
+	}
+}
+
+func TestParseJSONToleratesLeadingNotice(t *testing.T) {
+	// brew occasionally prefixes a notice line before JSON on stdout.
+	noisy := []byte("Warning: something\n{\"formulae\":[],\"casks\":[]}")
+	var resp infoResponse
+	if err := parseJSON(noisy, &resp); err != nil {
+		t.Fatalf("parseJSON should tolerate leading notice: %v", err)
+	}
+}
+
+// TestExecRunnerStream exercises the real os/exec streaming path (OS pipe,
+// line scanning, terminal Done event) against a controlled command.
+func TestExecRunnerStream(t *testing.T) {
+	r := &execRunner{bin: "sh"}
+	ch, err := r.Stream(context.Background(), "-c", "printf 'line1\nline2\n'")
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	var lines []string
+	var done Event
+	for ev := range ch {
+		if ev.Done {
+			done = ev
+			continue
+		}
+		lines = append(lines, ev.Line)
+	}
+	if len(lines) != 2 || lines[0] != "line1" || lines[1] != "line2" {
+		t.Errorf("lines = %v, want [line1 line2]", lines)
+	}
+	if done.Err != nil {
+		t.Errorf("Done.Err = %v, want nil", done.Err)
+	}
+}
+
+func TestExecRunnerStreamPropagatesExitError(t *testing.T) {
+	r := &execRunner{bin: "sh"}
+	ch, err := r.Stream(context.Background(), "-c", "exit 3")
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	var done Event
+	for ev := range ch {
+		if ev.Done {
+			done = ev
+		}
+	}
+	if done.Err == nil {
+		t.Error("expected non-nil Done.Err for exit 3")
+	}
+}
