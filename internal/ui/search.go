@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
@@ -73,12 +74,22 @@ type searchModel struct {
 	height  int
 
 	results []string
+	descs   map[string]string // short-name -> one-line description for results
 }
 
 // searchResultsMsg / searchErrMsg carry the result of a one-shot Search; both are
 // namespaced so Root's broadcast never crosses with other views' data messages.
 type searchResultsMsg struct{ names []string }
 type searchErrMsg struct{ err error }
+
+// searchDescsMsg carries result descriptions fetched AFTER the results render,
+// so a slow `brew desc` never delays the result list. term/section identify the
+// query they belong to, so a superseded fetch can be ignored.
+type searchDescsMsg struct {
+	descs   map[string]string
+	term    string
+	section searchSection
+}
 
 // searchDetailMsg carries hydrated Info for the selected result, fetched off the
 // event loop so a slow (possibly network-bound) `brew info` never freezes the UI.
@@ -115,12 +126,26 @@ func (m searchModel) capturingInput() bool {
 // so results include third-party (non-official) installed taps.
 func (m searchModel) search(term string, section searchSection) tea.Cmd {
 	b := m.brew
+	kind := section.kind()
 	return func() tea.Msg {
-		names, err := b.Search(context.Background(), term, section.kind(), true)
+		names, err := b.Search(context.Background(), term, kind, true)
 		if err != nil {
 			return searchErrMsg{err}
 		}
-		return searchResultsMsg{names}
+		return searchResultsMsg{names: names}
+	}
+}
+
+// fetchDescs loads result descriptions in a follow-up command (best-effort) so
+// the result list renders immediately; a failure just leaves the column blank.
+func (m searchModel) fetchDescs(names []string) tea.Cmd {
+	if len(names) == 0 {
+		return nil
+	}
+	b, term, section := m.brew, m.term, m.section
+	return func() tea.Msg {
+		descs, _ := b.Descriptions(context.Background(), names, section.kind())
+		return searchDescsMsg{descs: descs, term: term, section: section}
 	}
 }
 
@@ -132,8 +157,17 @@ func (m searchModel) Update(msg tea.Msg) (child, tea.Cmd) {
 		return m, nil
 
 	case searchResultsMsg:
-		m.results = msg.names
+		m.results, m.descs = msg.names, nil
 		m.state, m.queried = stateLoaded, true
+		m.refreshTable()
+		m.table.SetCursor(0) // new results start at the top
+		return m, m.fetchDescs(msg.names)
+
+	case searchDescsMsg:
+		if msg.term != m.term || msg.section != m.section {
+			return m, nil // descriptions for a superseded query
+		}
+		m.descs = msg.descs
 		m.refreshTable()
 		return m, nil
 
@@ -331,14 +365,38 @@ func (m *searchModel) refreshTable() {
 	if w < 40 {
 		w = 40
 	}
+	nameW := frac(w, 0.32)
+	descW := w - nameW - 2 // remaining width; the table truncates longer text
+	if descW < 8 {
+		descW = 8
+	}
 	m.table.SetColumns([]table.Column{
-		{Title: m.section.label(), Width: w},
+		{Title: m.section.label(), Width: nameW},
+		{Title: "Description", Width: descW},
 	})
 	rows := make([]table.Row, 0, len(m.results))
 	for _, name := range m.results {
-		rows = append(rows, table.Row{name})
+		rows = append(rows, table.Row{name, m.descFor(name)})
 	}
+	// Preserve the cursor so descriptions filling in later don't jump the
+	// selection; the results handler resets it to the top for a fresh query.
+	cursor := m.table.Cursor()
 	m.table.SetRows(rows)
-	m.table.SetCursor(0)
+	if cursor < 0 || cursor >= len(rows) {
+		cursor = 0
+	}
+	m.table.SetCursor(cursor)
 	m.layout()
+}
+
+// descFor returns the cached one-liner for a result. It falls back to the short
+// name because brew desc keys tap-qualified packages (user/tap/name) by name.
+func (m searchModel) descFor(name string) string {
+	if d, ok := m.descs[name]; ok {
+		return d
+	}
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		return m.descs[name[i+1:]]
+	}
+	return ""
 }

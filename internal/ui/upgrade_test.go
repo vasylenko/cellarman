@@ -71,9 +71,10 @@ func TestUpgradeSelectionToggle(t *testing.T) {
 
 func TestUpgradeStreamsToCompletion(t *testing.T) {
 	m := loadedUpgrade(t, outdatedBrew())
-	m, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // start upgrade
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})    // select the row
+	m, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // upgrade selected
 	if !m.(upgradeModel).upgrading {
-		t.Fatal("enter should begin upgrading")
+		t.Fatal("enter should upgrade the selected package")
 	}
 	if cmd == nil {
 		t.Fatal("starting an upgrade should issue a stream command")
@@ -94,12 +95,49 @@ func TestUpgradeStreamsToCompletion(t *testing.T) {
 		}
 	}
 
+	if cmd == nil {
+		t.Error("a clean upgrade should broadcast packagesChanged so views refresh")
+	}
 	um := m.(upgradeModel)
 	if um.upgrading || !um.done {
 		t.Fatalf("after the stream: upgrading=%v done=%v, want false/true", um.upgrading, um.done)
 	}
 	if !strings.Contains(um.logBuf, "==> Upgrading gnutls") || !strings.Contains(um.logBuf, "done") {
 		t.Errorf("log should contain the streamed lines:\n%s", um.logBuf)
+	}
+}
+
+func TestUpgradeEnterWithoutSelectionDoesNothing(t *testing.T) {
+	m := loadedUpgrade(t, outdatedBrew())
+	m, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // nothing selected
+	um := m.(upgradeModel)
+	if um.upgrading {
+		t.Fatal("enter with no selection must NOT start an upgrade")
+	}
+	if cmd != nil {
+		t.Fatal("enter with no selection should not issue a command")
+	}
+	if !strings.Contains(um.View(), "Nothing selected") {
+		t.Errorf("expected guidance notice, got:\n%s", um.View())
+	}
+}
+
+func TestUpgradeAllKeyStartsUpgrade(t *testing.T) {
+	m := loadedUpgrade(t, outdatedBrew())
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'U', Text: "U"}) // upgrade all
+	if !m.(upgradeModel).upgrading {
+		t.Fatal("U should start an upgrade without requiring a selection")
+	}
+	if cmd == nil {
+		t.Fatal("U should issue a stream command")
+	}
+}
+
+func TestUpgradePackagesChangedReloads(t *testing.T) {
+	m := loadedUpgrade(t, outdatedBrew())
+	_, cmd := m.Update(packagesChangedMsg{})
+	if cmd == nil {
+		t.Fatal("packagesChangedMsg should reload the outdated list")
 	}
 }
 
@@ -110,6 +148,7 @@ func TestUpgradeRecoversFromStreamStartFailure(t *testing.T) {
 	b.streamErr = errors.New("cannot start brew upgrade")
 	m := loadedUpgrade(t, b)
 
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})    // select a row
 	m, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // attempt upgrade
 	if cmd == nil {
 		t.Fatal("starting an upgrade should issue a stream command")
@@ -138,6 +177,7 @@ func TestUpgradeAbortCancelsContext(t *testing.T) {
 	b := outdatedBrew()
 	m := loadedUpgrade(t, b)
 
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})    // select a row
 	m, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // start upgrade
 	m, _ = m.Update(cmd())                                  // startStream calls b.Upgrade(ctx) -> upgradeStartedMsg
 	if b.upgradeCtx == nil {

@@ -16,6 +16,7 @@ type Brew interface {
 	Taps(ctx context.Context) ([]brew.Tap, error)
 	Outdated(ctx context.Context) (*brew.OutdatedReport, error)
 	Search(ctx context.Context, term string, kind brew.Kind, evalAll bool) ([]string, error)
+	Descriptions(ctx context.Context, names []string, kind brew.Kind) (map[string]string, error)
 	Doctor(ctx context.Context) (*brew.DoctorReport, error)
 	Upgrade(ctx context.Context, names ...string) (<-chan brew.Event, error)
 	Cleanup(ctx context.Context) (<-chan brew.Event, error)

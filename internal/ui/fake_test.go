@@ -15,6 +15,7 @@ type fakeBrew struct {
 	outdated    *brew.OutdatedReport
 	doctor      *brew.DoctorReport
 	searchHits  []string
+	descs       map[string]string
 	infoFormula *brew.Formula
 	infoCask    *brew.Cask
 	err         error
@@ -38,6 +39,13 @@ func (f *fakeBrew) Info(_ context.Context, _ string, kind brew.Kind) (*brew.Form
 		return nil, f.infoCask, nil
 	}
 	return f.infoFormula, nil, nil
+}
+
+func (f *fakeBrew) Descriptions(_ context.Context, _ []string, _ brew.Kind) (map[string]string, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.descs, nil
 }
 
 func (f *fakeBrew) Taps(context.Context) ([]brew.Tap, error) {

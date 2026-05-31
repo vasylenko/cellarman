@@ -15,10 +15,11 @@ import (
 
 // upgradeKeys are this view's local bindings.
 var upgradeKeys = struct {
-	Toggle, Run, Refresh, Abort key.Binding
+	Toggle, Run, All, Refresh, Abort key.Binding
 }{
 	Toggle:  key.NewBinding(key.WithKeys("space", "x")),
 	Run:     key.NewBinding(key.WithKeys("enter")),
+	All:     key.NewBinding(key.WithKeys("U")),
 	Refresh: key.NewBinding(key.WithKeys("r")),
 	Abort:   key.NewBinding(key.WithKeys("esc")),
 }
@@ -44,6 +45,7 @@ type upgradeModel struct {
 	rows      []outdatedRow
 	upgrading bool
 	done      bool
+	notice    string // transient guidance, e.g. enter pressed with nothing selected
 	logBuf    string
 	ch        <-chan brew.Event
 	cancel    context.CancelFunc
@@ -111,6 +113,16 @@ func (m upgradeModel) Update(msg tea.Msg) (child, tea.Cmd) {
 		m.err, m.state = msg.err, stateError
 		return m, nil
 
+	case packagesChangedMsg:
+		// A mutation finished (here or in Diagnose); refresh the outdated list,
+		// but only when idle on it — never mid-upgrade, before the first visit
+		// (preserving lazy-load), or over an error screen. finishUpgrade leaves
+		// state==stateLoaded with upgrading=false, so its own refresh still fires.
+		if m.state == stateLoaded && !m.upgrading {
+			return m, m.load()
+		}
+		return m, nil
+
 	case upgradeStartedMsg:
 		m.ch = msg.ch
 		return m, m.next()
@@ -164,6 +176,7 @@ func (m upgradeModel) handleKey(msg tea.KeyPressMsg) (child, tea.Cmd) {
 		return m, nil
 	}
 
+	m.notice = "" // any key clears a stale notice
 	switch {
 	case key.Matches(msg, upgradeKeys.Toggle):
 		m.toggleSelection()
@@ -172,8 +185,16 @@ func (m upgradeModel) handleKey(msg tea.KeyPressMsg) (child, tea.Cmd) {
 		m.state = stateLoading
 		m.done = false
 		return m, tea.Batch(m.spinner.Tick, m.load())
+	case key.Matches(msg, upgradeKeys.All):
+		return m.startUpgrade(nil) // explicit: upgrade everything outdated
 	case key.Matches(msg, upgradeKeys.Run):
-		return m.startUpgrade()
+		names := m.selectedNames()
+		if len(names) == 0 {
+			// Never silently upgrade everything on an empty selection.
+			m.notice = "Nothing selected — space to select, or U to upgrade all"
+			return m, nil
+		}
+		return m.startUpgrade(names)
 	}
 
 	var cmd tea.Cmd
@@ -181,19 +202,17 @@ func (m upgradeModel) handleKey(msg tea.KeyPressMsg) (child, tea.Cmd) {
 	return m, cmd
 }
 
-// startUpgrade streams an upgrade of the selected packages, or every outdated
-// package when none are marked. The context is cancellable so esc can abort
-// mid-stream.
-func (m upgradeModel) startUpgrade() (child, tea.Cmd) {
+// startUpgrade streams `brew upgrade` for the given names (empty = everything
+// outdated). The context is cancellable so esc can abort mid-stream.
+func (m upgradeModel) startUpgrade(names []string) (child, tea.Cmd) {
 	if len(m.rows) == 0 {
 		return m, nil
 	}
-	names := m.selectedNames()
-
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	m.upgrading = true
 	m.done = false
+	m.notice = ""
 	m.logBuf = ""
 	m.log.SetContent("")
 	m.log.GotoTop()
@@ -218,10 +237,11 @@ func (m upgradeModel) finishUpgrade(err error) (child, tea.Cmd) {
 	m.ch = nil
 	if err != nil {
 		m.appendLog(errorStyle.Render("✗ " + err.Error()))
-	} else {
-		m.appendLog(okStyle.Render("✓ done"))
+		return m, nil // leave the failure on screen; r refreshes
 	}
-	return m, m.load()
+	m.appendLog(okStyle.Render("✓ done"))
+	// Broadcast so this and other package views (Browse) refresh after the upgrade.
+	return m, packagesChanged
 }
 
 // selectedNames returns the marked package names, or nil to upgrade everything.
@@ -289,8 +309,15 @@ func (m upgradeModel) View() string {
 		return okStyle.Render("Everything is up to date") + "\n\n" + hintStyle.Render("r refresh")
 	}
 
-	hint := hintStyle.Render("space select · enter upgrade · r refresh")
-	return m.table.View() + "\n" + hint
+	keys := "space select · enter upgrade selected · U upgrade all · r refresh"
+	if m.notice != "" {
+		keys = m.notice
+	}
+	line := hintStyle.Render(keys)
+	if n := len(m.selectedNames()); n > 0 {
+		line = labelStyle.Render(fmt.Sprintf("%d selected", n)) + "  " + line
+	}
+	return m.table.View() + "\n" + line
 }
 
 // layout sizes the table and log to the content area, reserving one line for the

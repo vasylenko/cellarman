@@ -122,6 +122,14 @@ func (m browseModel) Update(msg tea.Msg) (child, tea.Cmd) {
 		m.err, m.state = msg.err, stateError
 		return m, nil
 
+	case packagesChangedMsg:
+		// Installed set changed elsewhere (e.g. an upgrade). Refresh in the
+		// background, keeping current data on screen until the new data lands.
+		if m.state == stateLoaded {
+			return m, m.load()
+		}
+		return m, nil
+
 	case spinner.TickMsg:
 		if m.state != stateLoading {
 			return m, nil
@@ -159,6 +167,9 @@ func (m browseModel) handleKey(msg tea.KeyPressMsg) (child, tea.Cmd) {
 	}
 
 	switch {
+	case key.Matches(msg, browseKeys.Retry):
+		m.state = stateLoading
+		return m, tea.Batch(m.spinner.Tick, m.load())
 	case key.Matches(msg, browseKeys.NextSection):
 		m.section = browseSection((int(m.section) + 1) % len(browseSections))
 		m.refreshTable()
@@ -189,7 +200,7 @@ func (m browseModel) View() string {
 		return m.detail.View() + "\n" + hintStyle.Render("esc back · ↑/↓ scroll")
 	}
 
-	hint := hintStyle.Render("←/→ section · ↑/↓ navigate · enter details")
+	hint := hintStyle.Render("←/→ section · ↑/↓ navigate · enter details · r refresh")
 	return m.sectionHeader() + "\n" + m.table.View() + "\n" + hint
 }
 

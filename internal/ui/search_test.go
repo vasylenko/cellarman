@@ -28,7 +28,10 @@ func runSearch(t *testing.T, m child, term string) child {
 	if sm.state != stateLoading {
 		t.Fatalf("enter should start loading, got state %d", sm.state)
 	}
-	m, _ = m.Update(sm.search(sm.term, sm.section)()) // run the search Cmd, feed result back
+	m, cmd := m.Update(sm.search(sm.term, sm.section)()) // -> searchResultsMsg (+ descs cmd)
+	if cmd != nil {
+		m, _ = m.Update(cmd()) // -> searchDescsMsg, descriptions fill in
+	}
 	return m
 }
 
@@ -91,6 +94,24 @@ func TestSearchOpenDetailHydrates(t *testing.T) {
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if m.(searchModel).showing {
 		t.Fatal("esc should close the detail panel")
+	}
+}
+
+func TestSearchShowsDescriptions(t *testing.T) {
+	m := newSizedSearch(&fakeBrew{
+		searchHits: []string{"wget", "wget2"},
+		descs:      map[string]string{"wget": "Internet file retriever"},
+	})
+	m = runSearch(t, m, "wget")
+	sm := m.(searchModel)
+	if sm.descFor("wget") != "Internet file retriever" {
+		t.Errorf("descFor(wget) = %q", sm.descFor("wget"))
+	}
+	if sm.descFor("homebrew/core/wget") != "Internet file retriever" {
+		t.Error("descFor should fall back to short name for tap-qualified results")
+	}
+	if !strings.Contains(sm.View(), "Internet file retriever") {
+		t.Errorf("results should show the description:\n%s", sm.View())
 	}
 }
 

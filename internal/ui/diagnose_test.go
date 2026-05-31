@@ -44,6 +44,23 @@ func TestDiagnoseLoadShowsWarning(t *testing.T) {
 	}
 }
 
+func TestDiagnoseHighlightsAffectedItems(t *testing.T) {
+	m := loadedDiagnose(t, &fakeBrew{doctor: &brew.DoctorReport{
+		OK: false,
+		Warnings: []brew.Warning{{
+			Title:   "Some installed kegs have no formulae!",
+			Details: []string{"You should find replacements for the following formulae:", "  tflint"},
+		}},
+	}})
+	v := m.(diagnoseModel).View()
+	if !strings.Contains(v, "tflint") {
+		t.Errorf("the affected item must be shown:\n%s", v)
+	}
+	if !strings.Contains(v, "•") {
+		t.Errorf("indented affected items should render as bullets:\n%s", v)
+	}
+}
+
 func TestDiagnoseHealthy(t *testing.T) {
 	m := loadedDiagnose(t, &fakeBrew{doctor: &brew.DoctorReport{OK: true}})
 	dm := m.(diagnoseModel)

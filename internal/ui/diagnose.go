@@ -110,9 +110,10 @@ func (m diagnoseModel) Update(msg tea.Msg) (child, tea.Cmd) {
 			m.running = false
 			return m, nil
 		}
-		// Fix finished cleanly: re-run doctor so the report reflects the change.
+		// Fix finished cleanly: re-run doctor so the report reflects the change,
+		// and broadcast so views showing package data (Browse) refresh too.
 		m.state = stateLoading
-		return m, tea.Batch(m.spinner.Tick, m.load())
+		return m, tea.Batch(m.spinner.Tick, m.load(), packagesChanged)
 
 	case spinner.TickMsg:
 		if m.state != stateLoading && !m.running {
@@ -220,9 +221,19 @@ func renderReport(report *brew.DoctorReport) string {
 	fmt.Fprintln(&b, warnStyle.Render(fmt.Sprintf("%d warning(s)", len(report.Warnings))))
 	for _, w := range report.Warnings {
 		fmt.Fprintln(&b)
-		fmt.Fprintln(&b, headingStyle.Render(w.Title))
+		fmt.Fprintln(&b, warnStyle.Render("⚠ "+w.Title))
 		for _, d := range w.Details {
-			fmt.Fprintln(&b, mutedStyle.Render("  "+d))
+			trimmed := strings.TrimSpace(d)
+			if trimmed == "" {
+				continue
+			}
+			// Lines brew indented are the affected items the warning is about —
+			// highlight them as a bullet list; flush-left prose stays muted.
+			if d != trimmed {
+				fmt.Fprintln(&b, "    "+labelStyle.Render("• "+trimmed))
+			} else {
+				fmt.Fprintln(&b, "  "+mutedStyle.Render(trimmed))
+			}
 		}
 	}
 	return b.String()

@@ -25,6 +25,7 @@ func fullBrew() *fakeBrew {
 		Warnings: []brew.Warning{{Title: "Some installed kegs have no formulae!", Details: []string{"tflint"}}},
 	}
 	b.searchHits = []string{"wget", "wget2"}
+	b.descs = map[string]string{"wget": "retrieve files over HTTP", "wget2": "successor to wget"}
 	b.infoFormula = &brew.Formula{Name: "wget", Versions: brew.Versions{Stable: "1.21"}, Desc: "internet file retriever"}
 	return b
 }
@@ -76,8 +77,8 @@ func TestE2ESearchFlow(t *testing.T) {
 	for _, r := range "wget" {
 		tm.Send(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // run search
-	waitForText(t, tm, "wget2")                  // results table populated
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})   // run search
+	waitForText(t, tm, "retrieve files over HTTP") // results + description column rendered in one frame
 
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})  // open detail of highlighted result
 	waitForText(t, tm, "internet file retriever") // hydrated Info rendered

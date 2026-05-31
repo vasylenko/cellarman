@@ -77,6 +77,25 @@ func TestBrowseLoadError(t *testing.T) {
 	}
 }
 
+func TestBrowseManualRefresh(t *testing.T) {
+	m := loadedBrowse(t)
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	if m.(browseModel).state != stateLoading {
+		t.Fatal("r should refresh the installed list (loading)")
+	}
+	if cmd == nil {
+		t.Fatal("r should issue a reload command")
+	}
+}
+
+func TestBrowseRefreshesOnPackagesChanged(t *testing.T) {
+	m := loadedBrowse(t)
+	_, cmd := m.Update(packagesChangedMsg{})
+	if cmd == nil {
+		t.Fatal("packagesChangedMsg should trigger a background reload when loaded")
+	}
+}
+
 func TestBrowseRetryReloads(t *testing.T) {
 	m := newBrowseView(&fakeBrew{err: errors.New("boom")})
 	bm := m.(browseModel)
