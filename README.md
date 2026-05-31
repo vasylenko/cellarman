@@ -7,8 +7,8 @@ Built with [Bubble Tea v2](https://github.com/charmbracelet/bubbletea). It shell
 ## Features
 
 - **Browse** — installed formulae, casks, and taps with full detail (version, deps, license, homepage, caveats). Outdated packages are flagged.
-- **Search** — query formulae or casks across official *and* third-party installed taps; drill into any result's details.
-- **Upgrade** — see what's outdated, select packages (or all), and watch the upgrade stream live.
+- **Search** — query formulae or casks across official *and* third-party installed taps, with a one-line description per result; drill into any result's details.
+- **Upgrade** — see what's outdated, select the ones you want (or upgrade all), and watch the upgrade stream live.
 - **Diagnose** — run `brew doctor`, read the warnings, and apply safe fixes (`cleanup`, `autoremove`) with live output.
 
 ## Requirements
@@ -33,6 +33,8 @@ make build          # -> bin/brew-tui
 | `esc` | back out |
 | `←`/`→` | switch section (Browse, Search) |
 | `space` / `x` | select a package (Upgrade) |
+| `enter` / `U` | upgrade selected / upgrade all (Upgrade) |
+| `r` | refresh the list (Browse, Upgrade) |
 | `/` | edit the query (Search) |
 | `c` / `a` / `r` | cleanup / autoremove / re-check (Diagnose) |
 | `?` | toggle help |
