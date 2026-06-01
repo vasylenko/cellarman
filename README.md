@@ -2,8 +2,6 @@
 
 A terminal UI for [Homebrew](https://brew.sh): browse what's installed, search for new packages, upgrade, and run diagnostics — without memorizing `brew` subcommands.
 
-The name fits the trade: a *cellarman* tends the casks in a cellar, and Homebrew keeps everything in its `Cellar`.
-
 Built with [Bubble Tea v2](https://github.com/charmbracelet/bubbletea). It shells out to your `brew` binary and parses its JSON, so it always reflects exactly what Homebrew would do.
 
 ## Features
