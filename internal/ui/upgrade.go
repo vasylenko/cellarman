@@ -336,13 +336,10 @@ func (m *upgradeModel) layout() {
 // refreshTable rebuilds rows from the current selection state, restoring the
 // cursor so toggling a marker doesn't jump the highlight.
 func (m *upgradeModel) refreshTable() {
-	w := m.width
-	if w < 40 {
-		w = 40
-	}
+	w := tableWidth(m.width)
 	name, change, kind := frac(w, 0.30), frac(w, 0.44), frac(w, 0.14)
 	m.table.SetColumns([]table.Column{
-		{Title: "", Width: 3},
+		{Title: "", Width: flagColWidth},
 		{Title: "Package", Width: name},
 		{Title: "Change", Width: change},
 		{Title: "Kind", Width: kind},

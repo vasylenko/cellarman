@@ -361,10 +361,7 @@ func (m *searchModel) layout() {
 
 // refreshTable rebuilds the single Name column from the latest results.
 func (m *searchModel) refreshTable() {
-	w := m.width
-	if w < 40 {
-		w = 40
-	}
+	w := tableWidth(m.width)
 	nameW := frac(w, 0.32)
 	descW := w - nameW - 2 // remaining width; the table truncates longer text
 	if descW < 8 {

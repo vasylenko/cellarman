@@ -298,10 +298,7 @@ func (m *browseModel) layout() {
 // refreshTable rebuilds columns and rows for the current section. Column widths
 // scale with the available width so the table fills the pane without overflow.
 func (m *browseModel) refreshTable() {
-	w := m.width
-	if w < 40 {
-		w = 40
-	}
+	w := tableWidth(m.width)
 	switch m.section {
 	case sectionFormulae:
 		name, ver, tap := frac(w, 0.34), frac(w, 0.28), frac(w, 0.30)
@@ -309,7 +306,7 @@ func (m *browseModel) refreshTable() {
 			{Title: "Formula", Width: name},
 			{Title: "Version", Width: ver},
 			{Title: "Tap", Width: tap},
-			{Title: "", Width: 3},
+			{Title: "", Width: flagColWidth},
 		})
 		rows := make([]table.Row, 0, len(m.formulae))
 		for _, f := range m.formulae {
@@ -322,7 +319,7 @@ func (m *browseModel) refreshTable() {
 			{Title: "Cask", Width: tok},
 			{Title: "Version", Width: ver},
 			{Title: "Name", Width: name},
-			{Title: "", Width: 3},
+			{Title: "", Width: flagColWidth},
 		})
 		rows := make([]table.Row, 0, len(m.casks))
 		for _, c := range m.casks {
@@ -500,6 +497,22 @@ func yesNo(b bool) string {
 		return "yes"
 	}
 	return "no"
+}
+
+// Shared table layout: columns are sized as fractions of the available width,
+// clamped to a legible minimum, with a fixed-width trailing status column.
+const (
+	minTableWidth = 40
+	flagColWidth  = 3
+)
+
+// tableWidth clamps the available width to minTableWidth before columns are
+// sized as fractions of it, so a narrow terminal doesn't collapse them.
+func tableWidth(w int) int {
+	if w < minTableWidth {
+		return minTableWidth
+	}
+	return w
 }
 
 // frac returns a fraction of total as an int column width (min 4).
