@@ -11,10 +11,19 @@ Built with [Bubble Tea v2](https://github.com/charmbracelet/bubbletea). It shell
 - **Upgrade** — see what's outdated, select the ones you want (or upgrade all), and watch the upgrade stream live.
 - **Diagnose** — run `brew doctor`, read the warnings, and apply safe fixes (`cleanup`, `autoremove`) with live output.
 
+## Install
+
+```sh
+brew tap vasylenko/cellarman https://github.com/vasylenko/cellarman
+brew install cellarman
+```
+
+The tap URL is needed once per machine — modern Homebrew won't auto-tap a third-party repo on `install`. It builds from source (Homebrew pulls Go as a build-only dependency), so there's no signing/notarization in the way. After that, `brew upgrade cellarman` keeps it current.
+
 ## Requirements
 
-- Go 1.25+
 - `brew` on your `PATH`
+- Go 1.25+ — only to build it yourself; the Homebrew install pulls its own
 
 ## Build & run
 
