@@ -27,10 +27,10 @@ func TestRootBroadcastsDataToBackgroundView(t *testing.T) {
 	}
 
 	// Browse is now backgrounded; its load result must still land on it.
-	rm, _ = r.Update(browseDataMsg{formulae: []brew.Formula{{Name: "go"}}})
+	rm, _ = r.Update(browseInstalledMsg{formulae: []brew.Formula{{Name: "go"}}})
 	r = rm.(Root)
 	if r.views[browseView].(browseModel).state != stateLoaded {
-		t.Fatal("broadcast should deliver browseDataMsg to the backgrounded browse view")
+		t.Fatal("broadcast should deliver browseInstalledMsg to the backgrounded browse view")
 	}
 }
 
@@ -39,8 +39,8 @@ func TestRootBroadcastsDataToBackgroundView(t *testing.T) {
 func TestRootRoutesKeysToActiveViewOnly(t *testing.T) {
 	r := sizedRoot(t)
 
-	// Resolve browse's load so it's interactive.
-	rm, _ := r.Update(r.views[browseView].(browseModel).load()())
+	// Resolve browse's primary load so it's interactive.
+	rm, _ := r.Update(r.views[browseView].(browseModel).loadInstalled()())
 	r = rm.(Root)
 
 	rm, _ = r.Update(tea.KeyPressMsg{Code: 'l', Text: "l"}) // browse: next section

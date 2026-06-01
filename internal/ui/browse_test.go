@@ -8,13 +8,15 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// loadedBrowse returns a browse view sized and populated with sampleBrew data.
+// loadedBrowse returns a browse view sized and fully populated with sampleBrew
+// data, feeding both concurrent load results back as Init would.
 func loadedBrowse(t *testing.T) child {
 	t.Helper()
 	m := newBrowseView(sampleBrew())
 	bm := m.(browseModel)
 	m, _ = m.Update(contentSizeMsg{width: 100, height: 20})
-	m, _ = m.Update(bm.load()()) // run the load Cmd and feed its result back
+	m, _ = m.Update(bm.loadInstalled()())
+	m, _ = m.Update(bm.loadTaps()())
 	if m.(browseModel).state != stateLoaded {
 		t.Fatalf("expected loaded, got state %d", m.(browseModel).state)
 	}
@@ -67,7 +69,7 @@ func TestBrowseOpenAndCloseDetail(t *testing.T) {
 func TestBrowseLoadError(t *testing.T) {
 	m := newBrowseView(&fakeBrew{err: errors.New("brew exploded")})
 	bm := m.(browseModel)
-	m, _ = m.Update(bm.load()())
+	m, _ = m.Update(bm.loadInstalled()())
 	bm = m.(browseModel)
 	if bm.state != stateError {
 		t.Fatalf("state = %d, want error", bm.state)
@@ -99,12 +101,84 @@ func TestBrowseRefreshesOnPackagesChanged(t *testing.T) {
 func TestBrowseRetryReloads(t *testing.T) {
 	m := newBrowseView(&fakeBrew{err: errors.New("boom")})
 	bm := m.(browseModel)
-	m, _ = m.Update(bm.load()()) // -> error
+	m, _ = m.Update(bm.loadInstalled()()) // -> error
 	m, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	if m.(browseModel).state != stateLoading {
 		t.Fatal("retry should reset to loading")
 	}
 	if cmd == nil {
 		t.Fatal("retry should issue a reload command")
+	}
+}
+
+// The point of the split: the primary content paints before the slow taps load,
+// and taps fill in afterward without blocking it.
+func TestBrowseTapsLoadAfterInstalled(t *testing.T) {
+	m := newBrowseView(sampleBrew())
+	bm := m.(browseModel)
+	m, _ = m.Update(contentSizeMsg{width: 100, height: 20})
+
+	m, _ = m.Update(bm.loadInstalled()()) // primary lands first
+	bm = m.(browseModel)
+	if bm.state != stateLoaded {
+		t.Fatalf("primary content should be loaded, got state %d", bm.state)
+	}
+	if bm.tapsState != stateLoading {
+		t.Fatalf("taps should still be loading, got %d", bm.tapsState)
+	}
+	if !strings.Contains(bm.View(), "Taps (…)") {
+		t.Errorf("header should mark taps still loading:\n%s", bm.View())
+	}
+
+	m, _ = m.Update(bm.loadTaps()()) // taps land in the background
+	bm = m.(browseModel)
+	if bm.tapsState != stateLoaded {
+		t.Fatalf("taps should be loaded, got %d", bm.tapsState)
+	}
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'h', Text: "h"}) // -> taps (wrap left)
+	bm = m.(browseModel)
+	if bm.section != sectionTaps {
+		t.Fatalf("expected taps section, got %d", bm.section)
+	}
+	if got := len(bm.table.Rows()); got != 2 {
+		t.Fatalf("tap rows = %d, want 2", got)
+	}
+}
+
+func TestBrowseTapsSectionShowsLoading(t *testing.T) {
+	m := newBrowseView(sampleBrew())
+	bm := m.(browseModel)
+	m, _ = m.Update(contentSizeMsg{width: 100, height: 20})
+	m, _ = m.Update(bm.loadInstalled()()) // primary loaded, taps still pending
+
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'h', Text: "h"}) // -> taps section
+	bm = m.(browseModel)
+	if bm.section != sectionTaps {
+		t.Fatalf("expected taps section, got %d", bm.section)
+	}
+	if !strings.Contains(bm.View(), "Loading taps…") {
+		t.Errorf("taps section should show its loading state:\n%s", bm.View())
+	}
+}
+
+// A taps failure must not take down the primary view: formulae stay usable and
+// the error is confined to the Taps section.
+func TestBrowseTapsErrorKeepsPrimaryView(t *testing.T) {
+	m := newBrowseView(sampleBrew())
+	bm := m.(browseModel)
+	m, _ = m.Update(contentSizeMsg{width: 100, height: 20})
+	m, _ = m.Update(bm.loadInstalled()())                     // primary OK
+	m, _ = m.Update(browseTapsErrMsg{errors.New("tap boom")}) // taps fail
+	bm = m.(browseModel)
+	if bm.state != stateLoaded {
+		t.Fatalf("primary content must stay loaded despite taps error, got %d", bm.state)
+	}
+	if got := len(bm.table.Rows()); got != 2 {
+		t.Fatalf("formulae rows = %d, want 2", got)
+	}
+
+	m, _ = bm.Update(tea.KeyPressMsg{Code: 'h', Text: "h"}) // -> taps section
+	if !strings.Contains(m.(browseModel).View(), "tap boom") {
+		t.Errorf("taps section should surface its error:\n%s", m.(browseModel).View())
 	}
 }
