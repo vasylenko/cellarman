@@ -17,6 +17,28 @@ import (
 
 const defaultBin = "brew"
 
+// Flags shared across subcommands. The JSON form is not uniform because brew's
+// own surface isn't: info and outdated expose a v2 schema, tap-info doesn't.
+const (
+	// jsonV2 selects brew's v2 JSON — the {formulae, casks} envelope our parsers
+	// expect. v1 returns a flat array and, for info, omits casks entirely.
+	jsonV2 = "--json=v2"
+	// jsonV1 is the only JSON form tap-info supports; it has no v2 variant.
+	jsonV1 = "--json"
+	// endOfOptions stops brew reading later args as flags, so a package name like
+	// "-rf" or "--macports" is treated as an operand. Load-bearing — see CLAUDE.md.
+	endOfOptions = "--"
+)
+
+// kindFlag is the brew selector that disambiguates a formula from a cask of the
+// same name. Centralized because info, search, and desc all need it.
+func kindFlag(kind Kind) string {
+	if kind == KindCask {
+		return "--cask"
+	}
+	return "--formula"
+}
+
 // Runner executes brew subcommands. It is an interface so tests can supply
 // recorded fixtures instead of spawning real processes.
 type Runner interface {
@@ -58,7 +80,7 @@ type infoResponse struct {
 // `brew info --json=v2 --installed` reads local metadata, so it stays fast even
 // with hundreds of packages and avoids N per-package info calls.
 func (c *Client) Installed(ctx context.Context) ([]Formula, []Cask, error) {
-	stdout, stderr, err := c.r.Output(ctx, "info", "--json=v2", "--installed")
+	stdout, stderr, err := c.r.Output(ctx, "info", jsonV2, "--installed")
 	if err != nil {
 		return nil, nil, cmdErr("info --installed", stderr, err)
 	}
@@ -72,13 +94,8 @@ func (c *Client) Installed(ctx context.Context) ([]Formula, []Cask, error) {
 // Info fetches full details for a single package. kind selects the brew flag so
 // a formula and a cask sharing a name don't collide.
 func (c *Client) Info(ctx context.Context, name string, kind Kind) (*Formula, *Cask, error) {
-	args := []string{"info", "--json=v2"}
-	if kind == KindCask {
-		args = append(args, "--cask")
-	} else {
-		args = append(args, "--formula")
-	}
-	args = append(args, "--", name) // end-of-options guard, as in Search
+	// endOfOptions guard before the name, as in Search.
+	args := []string{"info", jsonV2, kindFlag(kind), endOfOptions, name}
 
 	stdout, stderr, err := c.r.Output(ctx, args...)
 	if err != nil {
@@ -102,7 +119,7 @@ func (c *Client) Info(ctx context.Context, name string, kind Kind) (*Formula, *C
 
 // Taps lists installed taps with their formula/cask counts and origin.
 func (c *Client) Taps(ctx context.Context) ([]Tap, error) {
-	stdout, stderr, err := c.r.Output(ctx, "tap-info", "--installed", "--json")
+	stdout, stderr, err := c.r.Output(ctx, "tap-info", "--installed", jsonV1)
 	if err != nil {
 		return nil, cmdErr("tap-info", stderr, err)
 	}
@@ -115,7 +132,7 @@ func (c *Client) Taps(ctx context.Context) ([]Tap, error) {
 
 // Outdated lists packages with a newer version available.
 func (c *Client) Outdated(ctx context.Context) (*OutdatedReport, error) {
-	stdout, stderr, err := c.r.Output(ctx, "outdated", "--json=v2")
+	stdout, stderr, err := c.r.Output(ctx, "outdated", jsonV2)
 	if err != nil {
 		return nil, cmdErr("outdated", stderr, err)
 	}
@@ -129,18 +146,13 @@ func (c *Client) Outdated(ctx context.Context) (*OutdatedReport, error) {
 // Search returns package names matching term. evalAll widens the search to
 // third-party taps' contents (off by default because it is noticeably slower).
 func (c *Client) Search(ctx context.Context, term string, kind Kind, evalAll bool) ([]string, error) {
-	args := []string{"search"}
-	if kind == KindCask {
-		args = append(args, "--cask")
-	} else {
-		args = append(args, "--formula")
-	}
+	args := []string{"search", kindFlag(kind)}
 	if evalAll {
 		args = append(args, "--eval-all")
 	}
-	// "--" ends option parsing so a term starting with "-" is treated as text,
-	// not a brew flag (e.g. "--macports" must not switch brew to another source).
-	args = append(args, "--", term)
+	// endOfOptions so a term starting with "-" is treated as text, not a brew
+	// flag (e.g. "--macports" must not switch brew to another source).
+	args = append(args, endOfOptions, term)
 
 	stdout, stderr, err := c.r.Output(ctx, args...)
 	if err != nil {
@@ -157,13 +169,7 @@ func (c *Client) Descriptions(ctx context.Context, names []string, kind Kind) (m
 	if len(names) == 0 {
 		return map[string]string{}, nil
 	}
-	args := []string{"desc"}
-	if kind == KindCask {
-		args = append(args, "--cask")
-	} else {
-		args = append(args, "--formula")
-	}
-	args = append(args, "--")
+	args := []string{"desc", kindFlag(kind), endOfOptions}
 	args = append(args, names...)
 
 	stdout, stderr, err := c.r.Output(ctx, args...)
@@ -192,7 +198,7 @@ func (c *Client) Doctor(ctx context.Context) (*DoctorReport, error) {
 func (c *Client) Upgrade(ctx context.Context, names ...string) (<-chan Event, error) {
 	// "--" guards against a name being parsed as an option; with no names it is
 	// a no-op and brew still upgrades everything outdated.
-	return c.r.Stream(ctx, append([]string{"upgrade", "--"}, names...)...)
+	return c.r.Stream(ctx, append([]string{"upgrade", endOfOptions}, names...)...)
 }
 
 // Cleanup removes stale downloads and old versions, streaming progress.
@@ -294,6 +300,13 @@ func (r *execRunner) Output(ctx context.Context, args ...string) ([]byte, []byte
 	return stdout.Bytes(), stderr.Bytes(), err
 }
 
+// Scanner sizing for streamed output: brew emits very long lines (progress
+// bars, full paths), so start modest and allow growth to avoid ErrTooLong.
+const (
+	scanBufInit = 64 * 1024
+	scanBufMax  = 1024 * 1024
+)
+
 // Stream wires the child's stdout and stderr to a single OS pipe so progress
 // lines arrive in order. The parent closes its write end after Start so the
 // reader sees EOF once the child exits; CommandContext kills the child if ctx
@@ -320,7 +333,7 @@ func (r *execRunner) Stream(ctx context.Context, args ...string) (<-chan Event, 
 	go func() {
 		defer close(ch)
 		scanner := bufio.NewScanner(pr)
-		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		scanner.Buffer(make([]byte, 0, scanBufInit), scanBufMax)
 		for scanner.Scan() {
 			select {
 			case ch <- Event{Line: scanner.Text()}:
