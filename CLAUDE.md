@@ -1,6 +1,12 @@
 # CLAUDE.md
 
-README covers purpose, keys, architecture, testing, and limitations — read it for the obvious stuff. This file is only the non-obvious traps.
+README covers purpose, features, keys, and limitations — the user-facing stuff. This file covers architecture, testing, and the non-obvious traps.
+
+## Architecture
+
+- `internal/brew` — typed client over the `brew` CLI. No UI dependency; shells out, parses JSON (text for `doctor`), streams long-running commands over a channel. Unit-tested against fixtures.
+- `internal/ui` — Bubble Tea root model plus one self-contained sub-model per view, composed by a root that owns navigation and shared chrome.
+- `cmd/cellarman` — entrypoint.
 
 ## Charm v2 stack (imports + API)
 
@@ -25,6 +31,15 @@ Four things, spread across files, that the compiler/tests won't catch for a new 
 ## Adding a brew subcommand
 
 Guard every user-controlled operand with a `--` end-of-options separator before it (see `internal/brew/client.go`) — without it a package name like `-rf` or `--macports` is read as a brew flag. Existing commands are test-pinned; a new one is not.
+
+## Testing
+
+```sh
+make test               # unit + view + e2e (teatest), no real brew
+make test-integration   # exercises the real brew binary
+```
+
+Unit tests cover brew output parsing and each view's state transitions; teatest drives the full program through every view. The `integration` tag runs the same flows against your real Homebrew.
 
 ## Committing
 

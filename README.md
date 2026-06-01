@@ -40,21 +40,6 @@ make build          # -> bin/cellarman
 | `?` | toggle help |
 | `q` / `ctrl+c` | quit |
 
-## Architecture
-
-- `internal/brew` — typed client over the `brew` CLI. No UI dependency; shells out, parses JSON (text for `doctor`), streams long-running commands over a channel. Unit-tested against fixtures.
-- `internal/ui` — Bubble Tea root model plus one self-contained sub-model per view, composed by a root that owns navigation and shared chrome.
-- `cmd/cellarman` — entrypoint.
-
-## Testing
-
-```sh
-make test               # unit + view + e2e (teatest), no real brew
-make test-integration   # exercises the real brew binary
-```
-
-Unit tests cover brew output parsing and each view's state transitions; teatest drives the full program through every view. The `integration` tag runs the same flows against your real Homebrew.
-
 ## Limitations
 
 - Doctor offers only non-destructive fixes (`cleanup`, `autoremove`). It does not auto-remediate every warning — many need a human decision.
