@@ -126,7 +126,8 @@ func (r Root) View() tea.View {
 	)
 	v := tea.NewView(body)
 	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
+	// No mouse reporting: the terminal keeps native drag-to-select/copy. Nothing
+	// here reads mouse events, and navigation is keyboard-driven anyway.
 	return v
 }
 
