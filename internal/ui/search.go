@@ -48,7 +48,7 @@ func (s searchSection) kind() brew.Kind {
 // searchKeys are this view's local bindings. Tab is intentionally absent — it is
 // a global view switch owned by Root.
 var searchKeys = struct {
-	NextSection, PrevSection, Edit, Open, Back, Retry key.Binding
+	NextSection, PrevSection, Edit, Open, Back, Retry, Install key.Binding
 }{
 	NextSection: key.NewBinding(key.WithKeys("right", "]")),
 	PrevSection: key.NewBinding(key.WithKeys("left", "[")),
@@ -56,6 +56,7 @@ var searchKeys = struct {
 	Open:        key.NewBinding(key.WithKeys("enter")),
 	Back:        key.NewBinding(key.WithKeys("esc")),
 	Retry:       key.NewBinding(key.WithKeys("r")),
+	Install:     key.NewBinding(key.WithKeys("i")),
 }
 
 type searchModel struct {
@@ -75,6 +76,18 @@ type searchModel struct {
 
 	results []string
 	descs   map[string]string // short-name -> one-line description for results
+
+	// The detail panel doubles as an install surface: openDetail captures the
+	// shown package so `i` can install it, and the stream's live output reuses
+	// the same viewport (m.detail). installing/installDone gate that mode.
+	detailName      string
+	detailKind      brew.Kind
+	detailInstalled bool // shown package already on disk — `i` is hidden
+	installing      bool
+	installDone     bool
+	installLog      string
+	ch              <-chan brew.Event // live install stream; each line re-issues nextInstall
+	cancel          context.CancelFunc
 }
 
 // searchResultsMsg / searchErrMsg carry the result of a one-shot Search; both are
@@ -97,6 +110,12 @@ type searchDetailMsg struct {
 	formula *brew.Formula
 	cask    *brew.Cask
 }
+
+// Install-stream messages, namespaced so Root's broadcast can't bleed another
+// view's stream into this viewport.
+type searchInstallStartedMsg struct{ ch <-chan brew.Event }
+type searchInstallLineMsg string
+type searchInstallDoneMsg struct{ err error }
 
 func newSearchView(b Brew) child {
 	ti := textinput.New()
@@ -181,8 +200,10 @@ func (m searchModel) Update(msg tea.Msg) (child, tea.Cmd) {
 		switch {
 		case msg.formula != nil:
 			content = renderFormula(*msg.formula)
+			m.detailInstalled = msg.formula.IsInstalled()
 		case msg.cask != nil:
 			content = renderCask(*msg.cask)
+			m.detailInstalled = msg.cask.IsInstalled()
 		}
 		if content != "" {
 			m.detail.SetContent(content)
@@ -190,6 +211,18 @@ func (m searchModel) Update(msg tea.Msg) (child, tea.Cmd) {
 			m.showing = true
 		}
 		return m, nil
+
+	case searchInstallStartedMsg:
+		m.ch = msg.ch
+		return m, m.nextInstall()
+
+	case searchInstallLineMsg:
+		m.appendInstallLog(string(msg))
+		// Re-issue: a Cmd yields one event, so the stream stalls without this.
+		return m, m.nextInstall()
+
+	case searchInstallDoneMsg:
+		return m.finishInstall(msg.err)
 
 	case spinner.TickMsg:
 		if m.state != stateLoading {
@@ -234,9 +267,23 @@ func (m searchModel) handleKey(msg tea.KeyPressMsg) (child, tea.Cmd) {
 	}
 
 	if m.showing {
-		if key.Matches(msg, searchKeys.Back) {
-			m.showing = false
+		// Mid-install: esc aborts the brew command; everything else is ignored so
+		// stray keys can't disturb the stream.
+		if m.installing {
+			if key.Matches(msg, searchKeys.Back) && m.cancel != nil {
+				m.cancel()
+			}
 			return m, nil
+		}
+		if key.Matches(msg, searchKeys.Back) {
+			// esc leaves the detail/install-log panel back to the results list.
+			m.showing, m.installDone = false, false
+			return m, nil
+		}
+		// Offer install only for a not-yet-installed package, and not while the
+		// completed install log is still on screen.
+		if key.Matches(msg, searchKeys.Install) && !m.detailInstalled && !m.installDone {
+			return m.startInstall()
 		}
 		var cmd tea.Cmd
 		m.detail, cmd = m.detail.Update(msg)
@@ -280,6 +327,9 @@ func (m searchModel) openDetail() (child, tea.Cmd) {
 	if len(row) == 0 {
 		return m, nil
 	}
+	// Capture the operand now so `i` can install exactly what the detail shows,
+	// regardless of where the table cursor moves later.
+	m.detailName, m.detailKind = row[0], m.section.kind()
 	m.state = stateLoading
 	return m, tea.Batch(m.spinner.Tick, m.detailCmd(row[0], m.section.kind()))
 }
@@ -296,6 +346,67 @@ func (m searchModel) detailCmd(name string, kind brew.Kind) tea.Cmd {
 	}
 }
 
+// startInstall streams `brew install` for the shown package into the detail
+// viewport. The context is cancellable so esc can abort mid-install (the README
+// limitation about quitting not cancelling is sidestepped here on purpose).
+func (m searchModel) startInstall() (child, tea.Cmd) {
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancel = cancel
+	m.installing = true
+	m.installDone = false
+	m.installLog = ""
+	m.detail.SetContent("")
+	m.detail.GotoTop()
+
+	b, name, kind := m.brew, m.detailName, m.detailKind
+	cmd := startStream(ctx,
+		func(c context.Context) (<-chan brew.Event, error) { return b.Install(c, kind, name) },
+		func(ch <-chan brew.Event) tea.Msg { return searchInstallStartedMsg{ch} },
+		// A stream that fails to start is just a failed install — report it in the
+		// log via the same Done path rather than flipping the whole view to error.
+		func(e error) tea.Msg { return searchInstallDoneMsg{e} })
+	return m, cmd
+}
+
+// nextInstall pulls the install stream's next event into a view-specific message.
+func (m searchModel) nextInstall() tea.Cmd {
+	return waitForEvent(m.ch,
+		func(s string) tea.Msg { return searchInstallLineMsg(s) },
+		func(e error) tea.Msg { return searchInstallDoneMsg{e} })
+}
+
+// finishInstall tears down the stream and records the outcome. On success it
+// broadcasts packagesChanged so Browse refreshes, and marks the package installed
+// so re-pressing `i` won't offer a redundant install.
+func (m searchModel) finishInstall(err error) (child, tea.Cmd) {
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
+	m.installing = false
+	m.installDone = true
+	m.ch = nil
+	if err != nil {
+		m.appendInstallLog(errorStyle.Render("✗ " + err.Error()))
+		return m, nil // leave the failure on screen; esc backs out
+	}
+	m.appendInstallLog(okStyle.Render("✓ done"))
+	m.detailInstalled = true
+	return m, packagesChanged
+}
+
+// appendInstallLog grows the streaming buffer and pins the viewport to the latest
+// line so the user follows the install as it runs.
+func (m *searchModel) appendInstallLog(line string) {
+	if m.installLog == "" {
+		m.installLog = line
+	} else {
+		m.installLog += "\n" + line
+	}
+	m.detail.SetContent(m.installLog)
+	m.detail.GotoBottom()
+}
+
 func (m searchModel) View() string {
 	switch m.state {
 	case stateLoading:
@@ -305,7 +416,17 @@ func (m searchModel) View() string {
 	}
 
 	if m.showing {
-		return m.detail.View() + "\n" + hintStyle.Render("esc back · ↑/↓ scroll")
+		switch {
+		case m.installing:
+			return m.detail.View() + "\n" + hintStyle.Render("esc abort")
+		case m.installDone:
+			return m.detail.View() + "\n" + hintStyle.Render("esc back")
+		}
+		hint := "esc back · ↑/↓ scroll"
+		if !m.detailInstalled {
+			hint += " · i install"
+		}
+		return m.detail.View() + "\n" + hintStyle.Render(hint)
 	}
 
 	hint := hintStyle.Render("/ edit · ←/→ kind · ↑/↓ navigate · enter details")
