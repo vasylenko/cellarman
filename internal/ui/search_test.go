@@ -41,6 +41,21 @@ func newSizedSearch(b Brew) child {
 	return m
 }
 
+// openedSearchDetail runs a search and opens the first result's detail, leaving
+// the model in its detail-showing state — the surface install runs from.
+func openedSearchDetail(t *testing.T, f *fakeBrew) child {
+	t.Helper()
+	m := newSizedSearch(f)
+	m = runSearch(t, m, "wget")
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // start hydrating the result
+	sm := m.(searchModel)
+	m, _ = m.Update(sm.detailCmd(sm.detailName, sm.detailKind)()) // resolve Info -> showing
+	if !m.(searchModel).showing {
+		t.Fatal("detail panel should be open after Info resolves")
+	}
+	return m
+}
+
 func TestSearchTypeAndEnterPopulatesTable(t *testing.T) {
 	m := newSizedSearch(&fakeBrew{searchHits: []string{"wget", "wget2"}})
 	if !m.(searchModel).capturingInput() {
@@ -120,6 +135,108 @@ func TestSearchNoMatches(t *testing.T) {
 	m = runSearch(t, m, "nopackage")
 	if !strings.Contains(m.(searchModel).View(), "no matches") {
 		t.Errorf("empty results should render 'no matches':\n%s", m.(searchModel).View())
+	}
+}
+
+func TestSearchInstallStreamsToCompletion(t *testing.T) {
+	f := &fakeBrew{
+		searchHits:  []string{"wget"},
+		infoFormula: &brew.Formula{Name: "wget", Versions: brew.Versions{Stable: "1.21"}, Desc: "retriever"},
+		events:      []brew.Event{{Line: "==> Installing wget"}, {Line: "done"}},
+	}
+	m := openedSearchDetail(t, f)
+	if m.(searchModel).detailInstalled {
+		t.Fatal("fixture formula should not be installed")
+	}
+
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'i', Text: "i"})
+	if !m.(searchModel).installing {
+		t.Fatal("i should start the install")
+	}
+	if cmd == nil {
+		t.Fatal("starting an install should issue a stream command")
+	}
+
+	// Drive the stream to completion the same way the upgrade test does: the fake
+	// channel is buffered and closed, so cmd() never blocks.
+	for range 100 {
+		msg := cmd()
+		m, cmd = m.Update(msg)
+		// Guard the freeze-after-line-one bug: a line must always hand back a
+		// follow-up Cmd to pull the next event.
+		if _, ok := msg.(searchInstallLineMsg); ok && cmd == nil {
+			t.Fatal("handling a line must re-issue nextInstall (got nil cmd)")
+		}
+		if _, ok := msg.(searchInstallDoneMsg); ok {
+			break
+		}
+	}
+	if cmd == nil {
+		t.Error("a clean install should broadcast packagesChanged so views refresh")
+	}
+
+	sm := m.(searchModel)
+	if sm.installing || !sm.installDone {
+		t.Fatalf("after the stream: installing=%v done=%v, want false/true", sm.installing, sm.installDone)
+	}
+	if !sm.detailInstalled {
+		t.Error("package should be marked installed after a successful install")
+	}
+	if !strings.Contains(sm.installLog, "==> Installing wget") {
+		t.Errorf("log should contain the streamed lines:\n%s", sm.installLog)
+	}
+
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if m.(searchModel).showing {
+		t.Fatal("esc should close the panel after install completes")
+	}
+}
+
+// esc during an install cancels the context bound to the brew command.
+func TestSearchInstallAbortCancelsContext(t *testing.T) {
+	f := &fakeBrew{
+		searchHits:  []string{"wget"},
+		infoFormula: &brew.Formula{Name: "wget", Versions: brew.Versions{Stable: "1.21"}},
+	}
+	m := openedSearchDetail(t, f)
+
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'i', Text: "i"})
+	m, _ = m.Update(cmd()) // startStream calls Install(ctx) -> searchInstallStartedMsg
+	if f.installCtx == nil {
+		t.Fatal("Install should have been called with a context")
+	}
+	if f.installCtx.Err() != nil {
+		t.Fatal("context should be live before abort")
+	}
+
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEsc}) // abort
+	if f.installCtx.Err() == nil {
+		t.Fatal("esc should cancel the in-flight install context")
+	}
+}
+
+// An already-installed package offers no install: the hint is hidden and i is a
+// no-op, so the user can't kick off a redundant brew install.
+func TestSearchInstallHiddenWhenInstalled(t *testing.T) {
+	f := &fakeBrew{
+		searchHits: []string{"wget"},
+		infoFormula: &brew.Formula{
+			Name: "wget", Versions: brew.Versions{Stable: "1.21"},
+			Installed: []brew.InstalledKeg{{Version: "1.21"}},
+		},
+	}
+	m := openedSearchDetail(t, f)
+	sm := m.(searchModel)
+	if !sm.detailInstalled {
+		t.Fatal("installed fixture should set detailInstalled")
+	}
+	if strings.Contains(sm.View(), "i install") {
+		t.Errorf("install hint must be hidden for an installed package:\n%s", sm.View())
+	}
+
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'i', Text: "i"})
+	if m.(searchModel).installing || cmd != nil {
+		t.Fatal("i must do nothing for an already-installed package")
 	}
 }
 

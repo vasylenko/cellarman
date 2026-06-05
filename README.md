@@ -7,7 +7,7 @@ Built with [Bubble Tea v2](https://github.com/charmbracelet/bubbletea). It shell
 ## Features
 
 - **Browse** — installed formulae, casks, and taps with full detail (version, deps, license, homepage, caveats). Outdated packages are flagged.
-- **Search** — query formulae or casks across official *and* third-party installed taps, with a one-line description per result; drill into any result's details.
+- **Search** — query formulae or casks across official *and* third-party installed taps, with a one-line description per result; drill into any result's details and install it from there, watching the install stream live.
 - **Upgrade** — see what's outdated, select the ones you want (or upgrade all), and watch the upgrade stream live.
 - **Diagnose** — run `brew doctor`, read the warnings, and apply safe fixes (`cleanup`, `autoremove`) with live output.
 
@@ -41,6 +41,7 @@ make build          # -> bin/cellarman
 | `enter` | open details / start an action |
 | `esc` | back out |
 | `←`/`→` | switch section (Browse, Search) |
+| `i` | install the package shown in details (Search) |
 | `space` / `x` | select a package (Upgrade) |
 | `enter` / `U` | upgrade selected / upgrade all (Upgrade) |
 | `r` | refresh the list (Browse, Upgrade) |
@@ -52,5 +53,5 @@ make build          # -> bin/cellarman
 ## Limitations
 
 - Doctor offers only non-destructive fixes (`cleanup`, `autoremove`). It does not auto-remediate every warning — many need a human decision.
-- Quitting does not cancel a running `brew` command — it keeps going in the background until it finishes. Abort an in-progress upgrade with `esc` first if you want to stop it; cleanup/autoremove in Diagnose run to completion.
+- Quitting does not cancel a running `brew` command — it keeps going in the background until it finishes. Abort an in-progress upgrade or install with `esc` first if you want to stop it; cleanup/autoremove in Diagnose run to completion.
 - Outdated-cask parsing assumes the same `--json=v2` shape as formulae (Homebrew's documented schema).
