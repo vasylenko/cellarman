@@ -1,8 +1,8 @@
 class Cellarman < Formula
   desc "Terminal UI for Homebrew: browse, search, upgrade, and run diagnostics"
   homepage "https://github.com/vasylenko/cellarman"
-  url "https://github.com/vasylenko/cellarman/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "4a8867459ae6d6f087eb8887c11d608f5941d5fec816b7bcb4c3f5ad1709cc90"
+  url "https://github.com/vasylenko/cellarman/archive/refs/tags/v0.2.0.tar.gz"
+  sha256 "b0db32bf79311c563bab9a6e600abdccfb108cc14a3bfde9176e590dbec650b5"
   license "MIT"
   head "https://github.com/vasylenko/cellarman.git", branch: "main"
 
