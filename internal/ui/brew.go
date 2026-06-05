@@ -18,6 +18,7 @@ type Brew interface {
 	Search(ctx context.Context, term string, kind brew.Kind, evalAll bool) ([]string, error)
 	Descriptions(ctx context.Context, names []string, kind brew.Kind) (map[string]string, error)
 	Doctor(ctx context.Context) (*brew.DoctorReport, error)
+	Install(ctx context.Context, kind brew.Kind, names ...string) (<-chan brew.Event, error)
 	Upgrade(ctx context.Context, names ...string) (<-chan brew.Event, error)
 	Cleanup(ctx context.Context) (<-chan brew.Event, error)
 	Autoremove(ctx context.Context) (<-chan brew.Event, error)

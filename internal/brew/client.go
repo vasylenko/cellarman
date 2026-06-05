@@ -193,6 +193,13 @@ func (c *Client) Doctor(ctx context.Context) (*DoctorReport, error) {
 	return parseDoctor(combined), nil
 }
 
+// Install installs the named packages, streaming brew's progress output. kind
+// selects --formula/--cask so a name shared by both resolves to the one the
+// user picked. The "--" guard keeps a name like "-rf" from being read as a flag.
+func (c *Client) Install(ctx context.Context, kind Kind, names ...string) (<-chan Event, error) {
+	return c.r.Stream(ctx, append([]string{"install", kindFlag(kind), endOfOptions}, names...)...)
+}
+
 // Upgrade upgrades the named packages, or everything outdated when names is
 // empty, streaming brew's progress output.
 func (c *Client) Upgrade(ctx context.Context, names ...string) (<-chan Event, error) {

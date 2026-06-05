@@ -388,6 +388,23 @@ func TestEndOfOptionsGuard(t *testing.T) {
 	if len(fr.lastArgs) < 2 || fr.lastArgs[0] != "upgrade" || fr.lastArgs[1] != "--" {
 		t.Errorf("Upgrade args %v must insert '--' right after the subcommand", fr.lastArgs)
 	}
+
+	if _, err := c.Install(context.Background(), KindFormula, "-rf"); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	assertGuarded(t, "Install", fr.lastArgs, "-rf")
+}
+
+func TestInstallPassesKindFlag(t *testing.T) {
+	fr := &fakeRunner{t: t}
+	c := NewWithRunner(fr)
+	if _, err := c.Install(context.Background(), KindCask, "firefox"); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	joined := strings.Join(fr.lastArgs, " ")
+	if !strings.HasPrefix(joined, "install --cask") {
+		t.Errorf("cask install args %q should start with 'install --cask'", joined)
+	}
 }
 
 // assertGuarded checks args end with the sequence ["--", operand].
