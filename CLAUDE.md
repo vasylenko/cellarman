@@ -44,3 +44,9 @@ Unit tests cover brew output parsing and each view's state transitions; teatest 
 ## Committing
 
 Commits are SSH-signed via 1Password — `git commit` fails cryptically if 1Password is locked. Unlock it first.
+
+## Releasing
+
+`make release VERSION=vX.Y.Z` tags and pushes — that's the whole manual step. The tag-triggered `release` workflow refreshes the formula's `url`+`sha256` from the tag's source tarball (the sha only exists once the tag is published, so the bump is necessarily downstream of the tag), commits it to `main` as `github-actions[bot]`, and cuts the GitHub Release. `git pull` afterwards to pick up the bot's formula commit.
+
+Tags must come from `main` — the workflow commits the bump to `main`, assuming the tag sits on it. `make formula VERSION=vX.Y.Z` runs just the formula step locally for an offline release (commit + push it yourself). If `main` ever gets branch protection requiring reviews or signed commits, the bot push needs a bypass.

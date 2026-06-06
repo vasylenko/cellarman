@@ -1,0 +1,51 @@
+name: release
+
+# A pushed v* tag is the whole manual step. The formula's sha256 can only be
+# computed once the tag's source tarball exists on GitHub, so this runs after the
+# tag: refresh the formula, commit the bump to main, and cut the GitHub Release.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # push the formula commit to main and create the release
+
+# Serialize releases so two tags pushed close together can't race the formula.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      # Check out main, not the tag: the bump is a new commit on the branch. main
+      # already holds the tagged commit (the tag is cut from main's HEAD).
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Refresh formula from the tag tarball
+        run: make formula VERSION="${GITHUB_REF_NAME}"
+
+      - name: Commit the formula bump to main
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/cellarman.rb
+          # No-op if the formula is already current (e.g. a re-run).
+          git diff --cached --quiet || git commit -m "cellarman ${GITHUB_REF_NAME}"
+          git push origin HEAD:main
+
+      - name: Cut the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "release ${GITHUB_REF_NAME} already exists, skipping"
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi
