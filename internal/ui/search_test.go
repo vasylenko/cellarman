@@ -261,3 +261,61 @@ func TestSearchErrorAndRetry(t *testing.T) {
 		t.Fatal("retry should issue a reload command")
 	}
 }
+
+// A failed search must not wall off the query line: the input stays visible and
+// editable so the user can fix the term and search again.
+func TestSearchErrorKeepsInputUsable(t *testing.T) {
+	m := newSizedSearch(&fakeBrew{err: errors.New("No formulae or casks found")})
+	m = typeQuery(m, "file manager")
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	sm := m.(searchModel)
+	m, _ = m.Update(sm.search(sm.term, sm.section)()) // -> error
+	sm = m.(searchModel)
+	if sm.state != stateError {
+		t.Fatalf("state = %d, want error", sm.state)
+	}
+
+	view := sm.View()
+	if !strings.Contains(view, "file manager") {
+		t.Errorf("error view must keep the query input visible:\n%s", view)
+	}
+	if !strings.Contains(view, "No formulae or casks found") {
+		t.Errorf("error view should show the error below the input:\n%s", view)
+	}
+
+	// '/' re-focuses the input; editing + enter re-runs the search.
+	m, _ = m.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
+	if !m.(searchModel).capturingInput() {
+		t.Fatal("/ should re-focus the query input in the error state")
+	}
+	m = typeQuery(m, "x")
+	m, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.(searchModel).state != stateLoading {
+		t.Fatal("editing the query and pressing enter should re-run the search")
+	}
+	if cmd == nil {
+		t.Fatal("resubmitting should issue a search command")
+	}
+}
+
+// From the error state, switching kind re-runs the same term against the other
+// kind — the natural recovery when a formula search should have been a cask one.
+func TestSearchErrorKindSwitchRetries(t *testing.T) {
+	m := newSizedSearch(&fakeBrew{err: errors.New("not found")})
+	m = typeQuery(m, "firefox")
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	sm := m.(searchModel)
+	m, _ = m.Update(sm.search(sm.term, sm.section)()) // -> error
+	if m.(searchModel).state != stateError {
+		t.Fatal("expected error state")
+	}
+
+	m, cmd := m.Update(tea.KeyPressMsg{Code: ']', Text: "]"}) // next kind
+	sm = m.(searchModel)
+	if sm.section != searchCasks {
+		t.Fatalf("] should switch to casks, got section %d", sm.section)
+	}
+	if sm.state != stateLoading || cmd == nil {
+		t.Fatal("switching kind from the error state should re-run the search")
+	}
+}

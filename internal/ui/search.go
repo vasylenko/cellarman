@@ -256,7 +256,18 @@ func (m searchModel) handleKey(msg tea.KeyPressMsg) (child, tea.Cmd) {
 	}
 
 	if m.state == stateError {
-		if key.Matches(msg, searchKeys.Retry) {
+		// A failed search is recoverable from the query line: edit the term, switch
+		// kind (re-runs against the other kind), or retry the same term. Other keys
+		// are inert — there are no results to act on.
+		switch {
+		case key.Matches(msg, searchKeys.Edit), key.Matches(msg, searchKeys.Back):
+			m.input.Focus()
+			return m, nil
+		case key.Matches(msg, searchKeys.NextSection):
+			return m.switchSection(1)
+		case key.Matches(msg, searchKeys.PrevSection):
+			return m.switchSection(-1)
+		case key.Matches(msg, searchKeys.Retry):
 			m.state = stateLoading
 			return m, tea.Batch(m.spinner.Tick, m.search(m.term, m.section))
 		}
@@ -408,11 +419,8 @@ func (m *searchModel) appendInstallLog(line string) {
 }
 
 func (m searchModel) View() string {
-	switch m.state {
-	case stateLoading:
+	if m.state == stateLoading {
 		return fmt.Sprintf("%s Searching…", m.spinner.View())
-	case stateError:
-		return errorStyle.Render("Error: "+m.err.Error()) + "\n\n" + hintStyle.Render("press r to retry")
 	}
 
 	if m.showing {
@@ -429,12 +437,19 @@ func (m searchModel) View() string {
 		return m.detail.View() + "\n" + hintStyle.Render(hint)
 	}
 
-	hint := hintStyle.Render("/ edit · ←/→ kind · ↑/↓ navigate · enter details")
+	// A failed search keeps the query line live: the error sits where results
+	// would, so the user can edit the term and search again instead of being
+	// walled off behind a full-screen error.
+	body, hint := m.resultsBody(), "/ edit · ←/→ kind · ↑/↓ navigate · enter details"
+	if m.state == stateError {
+		body = errorStyle.Render("Error: " + m.err.Error())
+		hint = "/ edit · ←/→ kind · r retry"
+	}
 	return lipgloss.JoinVertical(lipgloss.Left,
 		m.input.View(),
 		m.sectionHeader(),
-		m.resultsBody(),
-		hint,
+		body,
+		hintStyle.Render(hint),
 	)
 }
 
