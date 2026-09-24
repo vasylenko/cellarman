@@ -138,7 +138,7 @@ func (m browseModel) Update(msg tea.Msg) (child, tea.Cmd) {
 	switch msg := msg.(type) {
 	case contentSizeMsg:
 		m.width, m.height = msg.width, msg.height
-		m.layout()
+		m.refitColumns() // Description fills the width, so columns re-fit too
 		return m, nil
 
 	case browseInstalledMsg:
@@ -295,53 +295,93 @@ func (m *browseModel) layout() {
 	m.detail.SetHeight(bodyHeight)
 }
 
-// refreshTable rebuilds columns and rows for the current section. Column widths
-// scale with the available width so the table fills the pane without overflow.
+// refreshTable rebuilds the current section's rows and columns and puts the
+// cursor back on the first row; it runs on every load and section switch.
 func (m *browseModel) refreshTable() {
-	w := tableWidth(m.width)
+	rows := m.tableRows()
+	// Clear first: renderRow indexes a column per cell, so a stale row wider
+	// than the new column set would panic. Emptying the table also resets its
+	// scroll offset — exactly right for a list that restarts at row 0.
+	m.table.SetRows(nil)
+	m.table.SetColumns(m.tableColumns(rows))
+	m.table.SetRows(rows)
+	m.table.SetCursor(0)
+	m.layout()
+}
+
+// refitColumns re-sizes the columns to a new pane width. It leaves the rows
+// alone because swapping them resets the table's scroll offset, which would
+// strand the cursor off-screen; the selection and scroll position survive.
+func (m *browseModel) refitColumns() {
+	m.table.SetColumns(m.tableColumns(m.table.Rows()))
+	m.layout()
+}
+
+// tableRows builds the current section's rows from the loaded data.
+func (m browseModel) tableRows() []table.Row {
+	var rows []table.Row
 	switch m.section {
 	case sectionFormulae:
-		name, ver, tap := frac(w, 0.34), frac(w, 0.28), frac(w, 0.30)
-		m.table.SetColumns([]table.Column{
-			{Title: "Formula", Width: name},
-			{Title: "Version", Width: ver},
-			{Title: "Tap", Width: tap},
-			{Title: "", Width: flagColWidth},
-		})
-		rows := make([]table.Row, 0, len(m.formulae))
 		for _, f := range m.formulae {
-			rows = append(rows, table.Row{f.Name, f.InstalledVersion(), f.Tap, outdatedFlag(f.Outdated)})
+			rows = append(rows, table.Row{f.Name, f.InstalledVersion(), outdatedFlag(f.Outdated), f.Desc})
 		}
-		m.table.SetRows(rows)
 	case sectionCasks:
-		tok, ver, name := frac(w, 0.30), frac(w, 0.24), frac(w, 0.38)
-		m.table.SetColumns([]table.Column{
-			{Title: "Cask", Width: tok},
-			{Title: "Version", Width: ver},
-			{Title: "Name", Width: name},
-			{Title: "", Width: flagColWidth},
-		})
-		rows := make([]table.Row, 0, len(m.casks))
 		for _, c := range m.casks {
-			rows = append(rows, table.Row{c.Token, c.Installed, c.DisplayName(), outdatedFlag(c.Outdated)})
+			rows = append(rows, table.Row{c.Token, c.Installed, outdatedFlag(c.Outdated), caskDesc(c)})
 		}
-		m.table.SetRows(rows)
 	case sectionTaps:
-		name, f, c := frac(w, 0.46), frac(w, 0.18), frac(w, 0.18)
-		m.table.SetColumns([]table.Column{
-			{Title: "Tap", Width: name},
-			{Title: "Formulae", Width: f},
-			{Title: "Casks", Width: c},
-			{Title: "Official", Width: 9},
-		})
-		rows := make([]table.Row, 0, len(m.taps))
 		for _, t := range m.taps {
 			rows = append(rows, table.Row{t.Name, fmt.Sprint(t.FormulaCount()), fmt.Sprint(t.CaskCount()), yesNo(t.Official)})
 		}
-		m.table.SetRows(rows)
 	}
-	m.table.SetCursor(0)
-	m.layout()
+	return rows
+}
+
+// tableColumns sizes the current section's columns for the pane width. Package
+// sections fit name and version to rows' content and give the rest of the
+// width to Description, so wide terminals show descriptions in full.
+func (m browseModel) tableColumns(rows []table.Row) []table.Column {
+	w := tableWidth(m.width)
+	switch m.section {
+	case sectionFormulae:
+		return packageColumns("Formula", rows, w)
+	case sectionCasks:
+		return packageColumns("Cask", rows, w)
+	case sectionTaps:
+		return []table.Column{
+			{Title: "Tap", Width: frac(w, 0.46)},
+			{Title: "Formulae", Width: frac(w, 0.18)},
+			{Title: "Casks", Width: frac(w, 0.18)},
+			{Title: "Official", Width: 9},
+		}
+	}
+	return nil
+}
+
+// packageColumns lays out the name | version | flag | description rows shared
+// by the Formulae and Casks sections. The flag sits beside the version it
+// qualifies rather than at the far edge of a wide pane.
+func packageColumns(nameTitle string, rows []table.Row, w int) []table.Column {
+	name := fitCol(nameTitle, rows, 0, frac(w, 0.30))
+	ver := fitCol("Version", rows, 1, frac(w, 0.20))
+	return []table.Column{
+		{Title: nameTitle, Width: name},
+		{Title: "Version", Width: ver},
+		{Title: "", Width: flagColWidth},
+		{Title: "Description", Width: fillCol(w, name, ver, flagColWidth)},
+	}
+}
+
+// caskDesc is a cask's Description cell. Not every cask ships a desc; its
+// human-readable name is then the best hint at what the token is.
+func caskDesc(c brew.Cask) string {
+	if c.Desc != "" {
+		return c.Desc
+	}
+	if name := c.DisplayName(); name != c.Token {
+		return name
+	}
+	return ""
 }
 
 // openDetail renders the selected item's detail (already in memory from the
@@ -497,29 +537,4 @@ func yesNo(b bool) string {
 		return "yes"
 	}
 	return "no"
-}
-
-// Shared table layout: columns are sized as fractions of the available width,
-// clamped to a legible minimum, with a fixed-width trailing status column.
-const (
-	minTableWidth = 40
-	flagColWidth  = 3
-)
-
-// tableWidth clamps the available width to minTableWidth before columns are
-// sized as fractions of it, so a narrow terminal doesn't collapse them.
-func tableWidth(w int) int {
-	if w < minTableWidth {
-		return minTableWidth
-	}
-	return w
-}
-
-// frac returns a fraction of total as an int column width (min 4).
-func frac(total int, f float64) int {
-	w := int(float64(total) * f)
-	if w < 4 {
-		return 4
-	}
-	return w
 }

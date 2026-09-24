@@ -6,7 +6,7 @@ Built with [Bubble Tea v2](https://github.com/charmbracelet/bubbletea). It shell
 
 ## Features
 
-- **Browse** — installed formulae, casks, and taps with full detail (version, deps, license, homepage, caveats). Outdated packages are flagged.
+- **Browse** — installed formulae, casks, and taps, each package listed with its one-line description so unfamiliar names explain themselves; open any for full detail (version, deps, license, homepage, caveats). Outdated packages are flagged.
 - **Search** — query formulae or casks across official *and* third-party installed taps, with a one-line description per result; drill into any result's details and install it from there, watching the install stream live.
 - **Upgrade** — see what's outdated, select the ones you want (or upgrade all), and watch the upgrade stream live.
 - **Diagnose** — run `brew doctor`, read the warnings, and apply safe fixes (`cleanup`, `autoremove`) with live output.

@@ -28,6 +28,10 @@ Four things, spread across files, that the compiler/tests won't catch for a new 
 - Streaming view: re-issue `waitForEvent` from `Update` on every line, or output freezes after line one (the `tea.Cmd`-yields-one-message contract in `stream.go`).
 - Text-input view: implement `inputCapturer`, or global `q`/`?` will quit/toggle-help instead of typing into the field.
 
+## Table layout
+
+bubbles' table pads every column by `cellPad` cells, and its viewport hard-clips anything past the pane width — a width budget that forgets the padding silently cuts off the rightmost column. Size columns with `fitCol`/`fillCol` (`internal/ui/columns.go`), which pay for it. Also, `renderRow` indexes a column per cell: a row with more cells than the current columns panics, so clear rows before swapping in a narrower column set. But clearing (or shrinking) rows resets the table's scroll offset, stranding a restored cursor off-screen — a resize must re-fit columns only and leave rows alone (see Browse's `refitColumns`).
+
 ## Adding a brew subcommand
 
 Guard every user-controlled operand with a `--` end-of-options separator before it (see `internal/brew/client.go`) — without it a package name like `-rf` or `--macports` is read as a brew flag. Existing commands are test-pinned; a new one is not.

@@ -30,10 +30,18 @@ func fullBrew() *fakeBrew {
 	return b
 }
 
-func waitForText(t *testing.T, tm *teatest.TestModel, want string) {
+// waitForText waits until every want string has appeared in the program output.
+// Reading consumes the output, so strings rendered in the same frame must be
+// awaited in one call — a second call would never see the frame again.
+func waitForText(t *testing.T, tm *teatest.TestModel, want ...string) {
 	t.Helper()
 	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
-		return bytes.Contains(b, []byte(want))
+		for _, w := range want {
+			if !bytes.Contains(b, []byte(w)) {
+				return false
+			}
+		}
+		return true
 	}, teatest.WithDuration(3*time.Second), teatest.WithCheckInterval(20*time.Millisecond))
 }
 
@@ -44,8 +52,9 @@ func waitForText(t *testing.T, tm *teatest.TestModel, want string) {
 func TestE2ETabThroughAllViews(t *testing.T) {
 	tm := teatest.NewTestModel(t, NewRoot(fullBrew()), teatest.WithInitialTermSize(120, 40))
 
-	// Browse loads on startup: section header with the formula count.
-	waitForText(t, tm, "Formulae (2)")
+	// Browse loads on startup: section header with the formula count, and each
+	// installed package's description beside it.
+	waitForText(t, tm, "Formulae (2)", "Go programming language")
 
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyTab}) // -> Search
 	waitForText(t, tm, "type a query")

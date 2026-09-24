@@ -2,10 +2,14 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+
+	"github.com/vasylenko/cellarman/internal/brew"
 )
 
 // loadedBrowse returns a browse view sized and fully populated with sampleBrew
@@ -180,5 +184,110 @@ func TestBrowseTapsErrorKeepsPrimaryView(t *testing.T) {
 	m, _ = bm.Update(tea.KeyPressMsg{Code: 'h', Text: "h"}) // -> taps section
 	if !strings.Contains(m.(browseModel).View(), "tap boom") {
 		t.Errorf("taps section should surface its error:\n%s", m.(browseModel).View())
+	}
+}
+
+func TestBrowseShowsDescriptions(t *testing.T) {
+	m := loadedBrowse(t)
+	if v := m.View(); !strings.Contains(v, "Go programming language") {
+		t.Errorf("formulae should show their description:\n%s", v)
+	}
+	// The sample cask ships no desc, so its human-readable name stands in.
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'l', Text: "l"}) // -> casks
+	if v := m.View(); !strings.Contains(v, "sbarex QLMarkdown") {
+		t.Errorf("a cask without a desc should fall back to its name:\n%s", v)
+	}
+}
+
+func TestCaskDesc(t *testing.T) {
+	tests := []struct {
+		name string
+		cask brew.Cask
+		want string
+	}{
+		{"desc wins", brew.Cask{Token: "iterm2", Names: []string{"iTerm2"}, Desc: "Terminal emulator"}, "Terminal emulator"},
+		{"falls back to the human name", brew.Cask{Token: "iterm2", Names: []string{"iTerm2"}}, "iTerm2"},
+		{"never repeats the token", brew.Cask{Token: "iterm2"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := caskDesc(tt.cask); got != tt.want {
+				t.Errorf("caskDesc = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// Regression: column widths once ignored the table's per-cell padding, so rows
+// overran the pane and the viewport clipped the trailing outdated flag (it was
+// invisible at 80 columns). Every line must fit and the flag must show.
+func TestBrowseTableFitsWidth(t *testing.T) {
+	for _, w := range []int{minTableWidth, 80, 120, 200} {
+		t.Run(fmt.Sprint(w), func(t *testing.T) {
+			m := newBrowseView(sampleBrew())
+			bm := m.(browseModel)
+			m, _ = m.Update(contentSizeMsg{width: w, height: 20})
+			m, _ = m.Update(bm.loadInstalled()())
+			view := m.(browseModel).table.View()
+			for _, line := range strings.Split(view, "\n") {
+				if got := lipgloss.Width(line); got > w {
+					t.Errorf("line is %d cells wide, pane is %d: %q", got, w, line)
+				}
+			}
+			if !strings.Contains(view, "↑") {
+				t.Errorf("outdated flag should be visible:\n%s", view)
+			}
+		})
+	}
+}
+
+// Description fills the pane, so a resize must re-fit the columns — without
+// losing the user's place in the list.
+func TestBrowseResizeRefitsColumns(t *testing.T) {
+	m := loadedBrowse(t)                                // 100 wide
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // cursor -> row 1
+	before := m.(browseModel).table.Columns()[3].Width
+
+	m, _ = m.Update(contentSizeMsg{width: 200, height: 20})
+	bm := m.(browseModel)
+	if after := bm.table.Columns()[3].Width; after != before+100 {
+		t.Errorf("description width = %d after widening by 100, want %d", after, before+100)
+	}
+	if got := bm.table.Cursor(); got != 1 {
+		t.Errorf("cursor = %d after resize, want 1", got)
+	}
+}
+
+func TestBrowseSectionSwitchStartsAtTop(t *testing.T) {
+	m := loadedBrowse(t)
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})    // cursor -> row 1
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'h', Text: "h"}) // -> taps
+	if got := m.(browseModel).table.Cursor(); got != 0 {
+		t.Errorf("cursor = %d on a newly shown section, want 0", got)
+	}
+}
+
+// A resize must not scroll the selected row out of view. Swapping the table's
+// rows resets its scroll offset, so a re-fit may only touch the columns.
+func TestBrowseResizeKeepsSelectionVisible(t *testing.T) {
+	b := sampleBrew()
+	b.formulae = nil
+	for i := range 50 {
+		b.formulae = append(b.formulae, brew.Formula{Name: fmt.Sprintf("pkg%02d", i)})
+	}
+	m := newBrowseView(b)
+	bm := m.(browseModel)
+	m, _ = m.Update(contentSizeMsg{width: 100, height: 12})
+	m, _ = m.Update(bm.loadInstalled()())
+	for range 30 {
+		m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	if !strings.Contains(m.View(), "pkg30") {
+		t.Fatalf("precondition: selected row should be visible before resizing:\n%s", m.View())
+	}
+
+	m, _ = m.Update(contentSizeMsg{width: 120, height: 12})
+	if !strings.Contains(m.View(), "pkg30") {
+		t.Errorf("selected row pkg30 scrolled out of view after resize:\n%s", m.View())
 	}
 }
