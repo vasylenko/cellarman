@@ -1,9 +1,12 @@
 package ui
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"charm.land/bubbles/v2/table"
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestFitCol(t *testing.T) {
@@ -58,5 +61,32 @@ func TestFillColBudgetsPadding(t *testing.T) {
 func TestFillColFloor(t *testing.T) {
 	if got := fillCol(40, 30, 10); got != minFillWidth {
 		t.Errorf("fillCol = %d, want the %d floor when fixed columns overrun", got, minFillWidth)
+	}
+}
+
+// seqNames returns n distinct names: prefix00, prefix01, ...
+func seqNames(prefix string, n int) []string {
+	names := make([]string, n)
+	for i := range names {
+		names[i] = fmt.Sprintf("%s%02d", prefix, i)
+	}
+	return names
+}
+
+// assertResizeKeepsSelectionVisible scrolls a loaded table view (at least 31
+// rows named by seqNames("pkg", ...), 20 tall) down to pkg30, widens the pane,
+// and asserts the selected row is still on screen: clearing or shrinking a
+// table's rows resets its scroll offset and would strand the cursor.
+func assertResizeKeepsSelectionVisible(t *testing.T, m child) {
+	t.Helper()
+	for range 30 {
+		m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	if !strings.Contains(m.View(), "pkg30") {
+		t.Fatalf("precondition: selected row should be visible before resizing:\n%s", m.View())
+	}
+	m, _ = m.Update(contentSizeMsg{width: 120, height: 20})
+	if !strings.Contains(m.View(), "pkg30") {
+		t.Errorf("selected row pkg30 scrolled out of view after resize:\n%s", m.View())
 	}
 }

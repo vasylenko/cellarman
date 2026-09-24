@@ -5,18 +5,19 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// Shared table layout: columns are sized as fractions of the available width,
-// clamped to a legible minimum, with a fixed-width status column.
+// Shared table sizing: fixed columns fit their content or a fraction of the
+// width, and one flexible column takes whatever the padding budget leaves.
 const (
 	minTableWidth = 40
 	flagColWidth  = 3
-	// cellPad is the horizontal padding bubbles' default table styles add around
-	// every column (Padding(0, 1)). Width budgets must include it, or the
-	// table's viewport clips the rightmost column.
-	cellPad = 2
 	// minFillWidth keeps a flexible column legible when fixed columns crowd it.
 	minFillWidth = 8
 )
+
+// cellPad is the horizontal padding the table's cell style adds around every
+// column. Width budgets must include it, or the table's viewport clips the
+// rightmost column.
+var cellPad = table.DefaultStyles().Cell.GetHorizontalFrameSize()
 
 // tableWidth clamps the available width to minTableWidth before columns are
 // sized as fractions of it, so a narrow terminal doesn't collapse them.

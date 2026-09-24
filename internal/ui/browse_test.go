@@ -12,15 +12,21 @@ import (
 	"github.com/vasylenko/cellarman/internal/brew"
 )
 
+// sizedBrowse returns a browse view sized w×h with its primary load (formulae +
+// casks) resolved; taps are left loading.
+func sizedBrowse(b Brew, w, h int) child {
+	m := newBrowseView(b)
+	m, _ = m.Update(contentSizeMsg{width: w, height: h})
+	m, _ = m.Update(m.(browseModel).loadInstalled()())
+	return m
+}
+
 // loadedBrowse returns a browse view sized and fully populated with sampleBrew
 // data, feeding both concurrent load results back as Init would.
 func loadedBrowse(t *testing.T) child {
 	t.Helper()
-	m := newBrowseView(sampleBrew())
-	bm := m.(browseModel)
-	m, _ = m.Update(contentSizeMsg{width: 100, height: 20})
-	m, _ = m.Update(bm.loadInstalled()())
-	m, _ = m.Update(bm.loadTaps()())
+	m := sizedBrowse(sampleBrew(), 100, 20)
+	m, _ = m.Update(m.(browseModel).loadTaps()())
 	if m.(browseModel).state != stateLoaded {
 		t.Fatalf("expected loaded, got state %d", m.(browseModel).state)
 	}
@@ -118,12 +124,8 @@ func TestBrowseRetryReloads(t *testing.T) {
 // The point of the split: the primary content paints before the slow taps load,
 // and taps fill in afterward without blocking it.
 func TestBrowseTapsLoadAfterInstalled(t *testing.T) {
-	m := newBrowseView(sampleBrew())
+	m := sizedBrowse(sampleBrew(), 100, 20) // primary lands first
 	bm := m.(browseModel)
-	m, _ = m.Update(contentSizeMsg{width: 100, height: 20})
-
-	m, _ = m.Update(bm.loadInstalled()()) // primary lands first
-	bm = m.(browseModel)
 	if bm.state != stateLoaded {
 		t.Fatalf("primary content should be loaded, got state %d", bm.state)
 	}
@@ -150,13 +152,10 @@ func TestBrowseTapsLoadAfterInstalled(t *testing.T) {
 }
 
 func TestBrowseTapsSectionShowsLoading(t *testing.T) {
-	m := newBrowseView(sampleBrew())
-	bm := m.(browseModel)
-	m, _ = m.Update(contentSizeMsg{width: 100, height: 20})
-	m, _ = m.Update(bm.loadInstalled()()) // primary loaded, taps still pending
+	m := sizedBrowse(sampleBrew(), 100, 20) // primary loaded, taps still pending
 
 	m, _ = m.Update(tea.KeyPressMsg{Code: 'h', Text: "h"}) // -> taps section
-	bm = m.(browseModel)
+	bm := m.(browseModel)
 	if bm.section != sectionTaps {
 		t.Fatalf("expected taps section, got %d", bm.section)
 	}
@@ -168,12 +167,9 @@ func TestBrowseTapsSectionShowsLoading(t *testing.T) {
 // A taps failure must not take down the primary view: formulae stay usable and
 // the error is confined to the Taps section.
 func TestBrowseTapsErrorKeepsPrimaryView(t *testing.T) {
-	m := newBrowseView(sampleBrew())
-	bm := m.(browseModel)
-	m, _ = m.Update(contentSizeMsg{width: 100, height: 20})
-	m, _ = m.Update(bm.loadInstalled()())                     // primary OK
+	m := sizedBrowse(sampleBrew(), 100, 20)                   // primary OK
 	m, _ = m.Update(browseTapsErrMsg{errors.New("tap boom")}) // taps fail
-	bm = m.(browseModel)
+	bm := m.(browseModel)
 	if bm.state != stateLoaded {
 		t.Fatalf("primary content must stay loaded despite taps error, got %d", bm.state)
 	}
@@ -219,75 +215,64 @@ func TestCaskDesc(t *testing.T) {
 }
 
 // Regression: column widths once ignored the table's per-cell padding, so rows
-// overran the pane and the viewport clipped the trailing outdated flag (it was
-// invisible at 80 columns). Every line must fit and the flag must show.
+// overran the pane and the viewport clipped the rightmost column (the outdated
+// flag was invisible at 80 columns). Every section must fit the pane.
 func TestBrowseTableFitsWidth(t *testing.T) {
 	for _, w := range []int{minTableWidth, 80, 120, 200} {
 		t.Run(fmt.Sprint(w), func(t *testing.T) {
-			m := newBrowseView(sampleBrew())
-			bm := m.(browseModel)
-			m, _ = m.Update(contentSizeMsg{width: w, height: 20})
-			m, _ = m.Update(bm.loadInstalled()())
-			view := m.(browseModel).table.View()
-			for _, line := range strings.Split(view, "\n") {
-				if got := lipgloss.Width(line); got > w {
-					t.Errorf("line is %d cells wide, pane is %d: %q", got, w, line)
-				}
-			}
-			if !strings.Contains(view, "↑") {
+			m := sizedBrowse(sampleBrew(), w, 20)
+			m, _ = m.Update(m.(browseModel).loadTaps()())
+			if view := m.(browseModel).table.View(); !strings.Contains(view, "↑") {
 				t.Errorf("outdated flag should be visible:\n%s", view)
+			}
+			for range browseSections {
+				bm := m.(browseModel)
+				if got := lipgloss.Width(bm.table.View()); got > w {
+					t.Errorf("%s table is %d cells wide, pane is %d:\n%s", bm.section.label(), got, w, bm.table.View())
+				}
+				m, _ = m.Update(tea.KeyPressMsg{Code: 'l', Text: "l"}) // next section
 			}
 		})
 	}
 }
 
-// Description fills the pane, so a resize must re-fit the columns — without
-// losing the user's place in the list.
+// Description fills the pane, so a resize must re-fit the columns.
 func TestBrowseResizeRefitsColumns(t *testing.T) {
-	m := loadedBrowse(t)                                // 100 wide
-	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // cursor -> row 1
+	m := loadedBrowse(t) // 100 wide
 	before := m.(browseModel).table.Columns()[3].Width
-
 	m, _ = m.Update(contentSizeMsg{width: 200, height: 20})
-	bm := m.(browseModel)
-	if after := bm.table.Columns()[3].Width; after != before+100 {
+	if after := m.(browseModel).table.Columns()[3].Width; after != before+100 {
 		t.Errorf("description width = %d after widening by 100, want %d", after, before+100)
 	}
-	if got := bm.table.Cursor(); got != 1 {
-		t.Errorf("cursor = %d after resize, want 1", got)
-	}
 }
 
-func TestBrowseSectionSwitchStartsAtTop(t *testing.T) {
-	m := loadedBrowse(t)
-	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})    // cursor -> row 1
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'h', Text: "h"}) // -> taps
-	if got := m.(browseModel).table.Cursor(); got != 0 {
-		t.Errorf("cursor = %d on a newly shown section, want 0", got)
-	}
-}
-
-// A resize must not scroll the selected row out of view. Swapping the table's
-// rows resets its scroll offset, so a re-fit may only touch the columns.
 func TestBrowseResizeKeepsSelectionVisible(t *testing.T) {
-	b := sampleBrew()
-	b.formulae = nil
-	for i := range 50 {
-		b.formulae = append(b.formulae, brew.Formula{Name: fmt.Sprintf("pkg%02d", i)})
+	b := &fakeBrew{}
+	for _, name := range seqNames("pkg", 50) {
+		b.formulae = append(b.formulae, brew.Formula{Name: name})
 	}
-	m := newBrowseView(b)
-	bm := m.(browseModel)
-	m, _ = m.Update(contentSizeMsg{width: 100, height: 12})
-	m, _ = m.Update(bm.loadInstalled()())
+	assertResizeKeepsSelectionVisible(t, sizedBrowse(b, 100, 20))
+}
+
+// A section switch starts the new list at its first row, even when the previous
+// section was scrolled far down.
+func TestBrowseSectionSwitchStartsAtTop(t *testing.T) {
+	b := &fakeBrew{}
+	for _, name := range seqNames("pkg", 50) {
+		b.formulae = append(b.formulae, brew.Formula{Name: name})
+	}
+	for _, token := range seqNames("cask", 50) {
+		b.casks = append(b.casks, brew.Cask{Token: token})
+	}
+	m := sizedBrowse(b, 100, 20)
 	for range 30 {
 		m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	if !strings.Contains(m.View(), "pkg30") {
-		t.Fatalf("precondition: selected row should be visible before resizing:\n%s", m.View())
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'l', Text: "l"}) // -> casks
+	if got := m.(browseModel).table.Cursor(); got != 0 {
+		t.Errorf("cursor = %d on a newly shown section, want 0", got)
 	}
-
-	m, _ = m.Update(contentSizeMsg{width: 120, height: 12})
-	if !strings.Contains(m.View(), "pkg30") {
-		t.Errorf("selected row pkg30 scrolled out of view after resize:\n%s", m.View())
+	if !strings.Contains(m.View(), "cask00") {
+		t.Errorf("first row should be visible on a newly shown section:\n%s", m.View())
 	}
 }
