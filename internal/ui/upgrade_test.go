@@ -2,10 +2,12 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/vasylenko/cellarman/internal/brew"
 )
@@ -191,4 +193,41 @@ func TestUpgradeAbortCancelsContext(t *testing.T) {
 	if b.upgradeCtx.Err() == nil {
 		t.Fatal("esc should cancel the in-flight upgrade context")
 	}
+}
+
+// Regression: padding-blind column widths overran narrow panes, and the
+// viewport clipped the Kind column ("formula" showed as "f" at 40 columns).
+func TestUpgradeTableFitsWidth(t *testing.T) {
+	for _, w := range []int{minTableWidth, 60, 80, 120} {
+		t.Run(fmt.Sprint(w), func(t *testing.T) {
+			m := newUpgradeView(outdatedBrew())
+			m, _ = m.Update(contentSizeMsg{width: w, height: 20})
+			m, _ = m.Update(m.(upgradeModel).load()())
+			view := m.(upgradeModel).table.View()
+			if got := lipgloss.Width(view); got > w {
+				t.Errorf("table is %d cells wide, pane is %d:\n%s", got, w, view)
+			}
+			if !strings.Contains(view, "formula") {
+				t.Errorf("Kind column should be visible:\n%s", view)
+			}
+		})
+	}
+}
+
+// Change fills the pane, so a resize must re-fit the columns.
+func TestUpgradeResizeRefitsColumns(t *testing.T) {
+	m := loadedUpgrade(t, outdatedBrew()) // 100 wide
+	before := m.(upgradeModel).table.Columns()[2].Width
+	m, _ = m.Update(contentSizeMsg{width: 200, height: 20})
+	if after := m.(upgradeModel).table.Columns()[2].Width; after != before+100 {
+		t.Errorf("change width = %d after widening by 100, want %d", after, before+100)
+	}
+}
+
+func TestUpgradeResizeKeepsSelectionVisible(t *testing.T) {
+	report := &brew.OutdatedReport{}
+	for _, name := range seqNames("pkg", 50) {
+		report.Formulae = append(report.Formulae, brew.OutdatedPackage{Name: name})
+	}
+	assertResizeKeepsSelectionVisible(t, loadedUpgrade(t, &fakeBrew{outdated: report}))
 }

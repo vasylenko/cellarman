@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/vasylenko/cellarman/internal/brew"
 )
@@ -128,6 +129,28 @@ func TestSearchShowsDescriptions(t *testing.T) {
 	if !strings.Contains(sm.View(), "Internet file retriever") {
 		t.Errorf("results should show the description:\n%s", sm.View())
 	}
+}
+
+// Regression: the description column once overran the pane by two cells, so
+// the viewport clipped the "…" off every truncated description.
+func TestSearchTruncatedDescriptionKeepsEllipsis(t *testing.T) {
+	m := newSizedSearch(&fakeBrew{
+		searchHits: []string{"wget"},
+		descs:      map[string]string{"wget": strings.Repeat("Internet file retriever ", 10)},
+	})
+	m = runSearch(t, m, "wget")
+	view := m.(searchModel).table.View()
+	if got := lipgloss.Width(view); got > 100 {
+		t.Errorf("table is %d cells wide, pane is 100:\n%s", got, view)
+	}
+	if !strings.Contains(view, "…") {
+		t.Errorf("a truncated description should end in a visible ellipsis:\n%s", view)
+	}
+}
+
+func TestSearchResizeKeepsSelectionVisible(t *testing.T) {
+	m := runSearch(t, newSizedSearch(&fakeBrew{searchHits: seqNames("pkg", 50)}), "pkg")
+	assertResizeKeepsSelectionVisible(t, m)
 }
 
 func TestSearchNoMatches(t *testing.T) {

@@ -92,7 +92,7 @@ func (m upgradeModel) Update(msg tea.Msg) (child, tea.Cmd) {
 	switch msg := msg.(type) {
 	case contentSizeMsg:
 		m.width, m.height = msg.width, msg.height
-		m.layout()
+		m.refitColumns() // Change fills the width, so columns re-fit too
 		return m, nil
 
 	case upgradeDataMsg:
@@ -336,25 +336,39 @@ func (m *upgradeModel) layout() {
 // refreshTable rebuilds rows from the current selection state, restoring the
 // cursor so toggling a marker doesn't jump the highlight.
 func (m *upgradeModel) refreshTable() {
-	w := tableWidth(m.width)
-	name, change, kind := frac(w, 0.30), frac(w, 0.44), frac(w, 0.14)
-	m.table.SetColumns([]table.Column{
-		{Title: "", Width: flagColWidth},
-		{Title: "Package", Width: name},
-		{Title: "Change", Width: change},
-		{Title: "Kind", Width: kind},
-	})
 	rows := make([]table.Row, 0, len(m.rows))
 	for _, r := range m.rows {
 		change := fmt.Sprintf("%s → %s", r.pkg.InstalledVersion(), r.pkg.CurrentVersion)
 		rows = append(rows, table.Row{selectionMark(r.selected), r.pkg.Name, change, r.kind.String()})
 	}
+	m.table.SetColumns(m.tableColumns(rows))
 	cursor := m.table.Cursor()
 	m.table.SetRows(rows)
 	if cursor >= 0 && cursor < len(rows) {
 		m.table.SetCursor(cursor)
 	}
 	m.layout()
+}
+
+// refitColumns re-sizes the columns to a new pane width, keeping the rows, so
+// the cursor and scroll position survive a resize.
+func (m *upgradeModel) refitColumns() {
+	m.table.SetColumns(m.tableColumns(m.table.Rows()))
+	m.layout()
+}
+
+// tableColumns fits package and kind to their content and gives the rest of
+// the width to the version change.
+func (m upgradeModel) tableColumns(rows []table.Row) []table.Column {
+	w := tableWidth(m.width)
+	name := fitCol("Package", rows, 1, frac(w, 0.30))
+	kind := fitCol("Kind", rows, 3, frac(w, 0.20))
+	return []table.Column{
+		{Title: "", Width: flagColWidth},
+		{Title: "Package", Width: name},
+		{Title: "Change", Width: fillCol(w, flagColWidth, name, kind)},
+		{Title: "Kind", Width: kind},
+	}
 }
 
 func selectionMark(selected bool) string {
