@@ -172,7 +172,7 @@ func (m searchModel) Update(msg tea.Msg) (child, tea.Cmd) {
 	switch msg := msg.(type) {
 	case contentSizeMsg:
 		m.width, m.height = msg.width, msg.height
-		m.layout()
+		m.refreshTable() // Description fills the width, so columns re-fit too
 		return m, nil
 
 	case searchResultsMsg:
@@ -495,22 +495,19 @@ func (m *searchModel) layout() {
 	m.detail.SetHeight(detailHeight)
 }
 
-// refreshTable rebuilds the single Name column from the latest results.
+// refreshTable rebuilds the name and description columns from the latest
+// results: names fit their content, descriptions take the remaining width.
 func (m *searchModel) refreshTable() {
-	w := tableWidth(m.width)
-	nameW := frac(w, 0.32)
-	descW := w - nameW - 2 // remaining width; the table truncates longer text
-	if descW < 8 {
-		descW = 8
-	}
-	m.table.SetColumns([]table.Column{
-		{Title: m.section.label(), Width: nameW},
-		{Title: "Description", Width: descW},
-	})
 	rows := make([]table.Row, 0, len(m.results))
 	for _, name := range m.results {
 		rows = append(rows, table.Row{name, m.descFor(name)})
 	}
+	w := tableWidth(m.width)
+	nameW := fitCol(m.section.label(), rows, 0, frac(w, 0.40))
+	m.table.SetColumns([]table.Column{
+		{Title: m.section.label(), Width: nameW},
+		{Title: "Description", Width: fillCol(w, nameW)},
+	})
 	// Preserve the cursor so descriptions filling in later don't jump the
 	// selection; the results handler resets it to the top for a fresh query.
 	cursor := m.table.Cursor()

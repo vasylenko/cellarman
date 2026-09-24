@@ -2,10 +2,12 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/vasylenko/cellarman/internal/brew"
 )
@@ -127,6 +129,48 @@ func TestSearchShowsDescriptions(t *testing.T) {
 	}
 	if !strings.Contains(sm.View(), "Internet file retriever") {
 		t.Errorf("results should show the description:\n%s", sm.View())
+	}
+}
+
+// Regression: the description column once overran the pane by two cells, so
+// the viewport clipped the "…" off every truncated description.
+func TestSearchTruncatedDescriptionKeepsEllipsis(t *testing.T) {
+	m := newSizedSearch(&fakeBrew{
+		searchHits: []string{"wget"},
+		descs:      map[string]string{"wget": strings.Repeat("Internet file retriever ", 10)},
+	})
+	m = runSearch(t, m, "wget")
+	view := m.(searchModel).table.View()
+	for _, line := range strings.Split(view, "\n") {
+		if got := lipgloss.Width(line); got > 100 {
+			t.Errorf("line is %d cells wide, pane is 100: %q", got, line)
+		}
+	}
+	if !strings.Contains(view, "…") {
+		t.Errorf("a truncated description should end in a visible ellipsis:\n%s", view)
+	}
+}
+
+// A resize re-fits the description column without scrolling the selected
+// result out of view.
+func TestSearchResizeKeepsSelectionVisible(t *testing.T) {
+	var hits []string
+	for i := range 50 {
+		hits = append(hits, fmt.Sprintf("pkg%02d", i))
+	}
+	m := newSearchView(&fakeBrew{searchHits: hits})
+	m, _ = m.Update(contentSizeMsg{width: 100, height: 12})
+	m = runSearch(t, m, "pkg")
+	for range 30 {
+		m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	if !strings.Contains(m.View(), "pkg30") {
+		t.Fatalf("precondition: selected row should be visible before resizing:\n%s", m.View())
+	}
+
+	m, _ = m.Update(contentSizeMsg{width: 120, height: 12})
+	if !strings.Contains(m.View(), "pkg30") {
+		t.Errorf("selected row pkg30 scrolled out of view after resize:\n%s", m.View())
 	}
 }
 
