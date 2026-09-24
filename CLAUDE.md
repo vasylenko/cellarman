@@ -30,7 +30,7 @@ Four things, spread across files, that the compiler/tests won't catch for a new 
 
 ## Table layout
 
-bubbles' table pads every column by `cellPad` cells, and its viewport hard-clips anything past the pane width — a width budget that forgets the padding silently cuts off the rightmost column. Size columns with `fitCol`/`fillCol` (`internal/ui/columns.go`), which pay for it. Also, `renderRow` indexes a column per cell, so a row with more cells than the current columns panics — keep every section of a view at the same column count. And clearing or shrinking the rows resets the table's scroll offset, stranding a restored cursor off-screen: on resize, re-fit with `SetColumns` alone (see `refitColumns` in Browse and Search).
+bubbles' table pads every column by `cellPad` cells, and its viewport hard-clips anything past the pane width — a width budget that forgets the padding silently cuts off the rightmost column. Size columns with `fitCol`/`fillCol` (`internal/ui/columns.go`), which pay for it. Also, `renderRow` indexes a column per cell, so a row with more cells than the current columns panics — keep every section of a view at the same column count. And clearing or shrinking the rows resets the table's scroll offset, stranding a restored cursor off-screen: on resize, re-fit with `SetColumns` alone (see `refitColumns` in any table view).
 
 ## Adding a brew subcommand
 
